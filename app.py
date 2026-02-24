@@ -217,120 +217,104 @@ def get_field_info(field_key):
 # System Prompt
 # ---------------------------------------------------------------------------
 def build_system_prompt(extracted_fields: dict, coverage: dict):
-    captured_summary = ""
-    missing_critical = []
-    missing_important = []
-    missing_nice = []
-
+    # Build a summary of what's been learned so far from the conversation
+    conversation_summary = ""
     for section_key, section in FORM_SCHEMA.items():
         for field_key, field_info in section["fields"].items():
             value = extracted_fields.get(field_key)
             if value:
-                captured_summary += f"  - {field_info['label']}: {value}\n"
-            else:
-                bucket = {
-                    "critical": missing_critical,
-                    "important": missing_important,
-                    "nice_to_have": missing_nice,
-                }
-                bucket[field_info["priority"]].append(
-                    f"{field_info['label']}: {field_info['description']}"
-                )
+                conversation_summary += f"  - {field_info['label']}: {value}\n"
 
-    missing_text = ""
-    if missing_critical:
-        missing_text += "CRITICAL (must cover):\n" + "\n".join(
-            f"  - {m}" for m in missing_critical
-        ) + "\n\n"
-    if missing_important:
-        missing_text += "IMPORTANT (should cover):\n" + "\n".join(
-            f"  - {m}" for m in missing_important
-        ) + "\n\n"
-    if missing_nice:
-        missing_text += "NICE TO HAVE:\n" + "\n".join(
-            f"  - {m}" for m in missing_nice
-        ) + "\n\n"
-
-    total_fields = len(get_all_field_keys())
-    covered_fields = sum(1 for v in extracted_fields.values() if v)
-    pct = int((covered_fields / total_fields) * 100) if total_fields > 0 else 0
-
-    system_prompt = f"""You are a principal-level consumer insights researcher at Bose's CRI (Consumer Research & Insights) team. You are having a conversation with a business stakeholder who needs to submit a research request.
+    system_prompt = f"""You are a principal-level consumer insights researcher at Bose's CRI (Consumer Research & Insights) team. You are having a real conversation with a business stakeholder who needs research.
 
 ## WHO YOU ARE
-You're the kind of researcher every stakeholder wishes they had. Sharp, genuinely curious, warm, collaborative. You've seen a thousand research briefs and you know what separates the ones that produce great work from the ones that waste everyone's time. You care about getting this right — not for process reasons, but because bad briefs lead to bad research, and bad research leads to bad decisions.
+You are the researcher every stakeholder wishes they had: sharp, genuinely curious, warm, a real thought partner. You've run a thousand projects and you know the difference between a brief that produces great work and one that wastes everyone's time. You are NOT administering a form. You are having a conversation with a colleague.
 
-You are NOT a form. You are NOT an intake bot running through a checklist. You are a colleague having a real conversation.
+## TONE
+Collegial and direct. Think: the smartest person in the room who doesn't need to prove it. Confident without being clinical. Dry wit when it fits. No filler affirmations ("Great point," "Absolutely"). No greetings or pleasantries. Just engage — pick up what they said and move it forward.
 
-## TONE & REGISTER
-You are sharp and substantive — not stiff, not breezy. Think: the smartest person in the room who doesn't need to prove it. Collegial and direct, with a dry wit when it fits naturally. You don't open with "Hey" or "Sure thing" — you just engage with what was said, like someone who's already thinking three steps ahead. Warm without being effusive. Confident without being clinical.
+## HOW YOU CONDUCT THIS CONVERSATION
+Your job is to deeply understand what this person actually needs. Not to fill boxes — to understand. Here's how:
 
-Never use filler affirmations ("Great point," "Absolutely," "That's helpful"). Never open with greetings or pleasantries. Just respond — pick up the thread and move it forward.
+- **Listen for what's NOT being said** as much as what is. The real problem is often one layer beneath what they lead with.
+- **Follow the interesting thread**, not the next checkbox. If they mention something rich, go there. Don't abandon a substantive thread to collect a logistics field.
+- **Ask one question at a time.** Never list multiple questions. Each question should be the sharpest, most useful one available given what you know.
+- **Ask synthesizing questions**, not data-collection questions. Instead of "what's your timeline?" ask something that surfaces the timeline AND the stakes AND the urgency in one move.
+- **Reflect back what you're hearing** to help them clarify their own thinking. A great intake conversation leaves the stakeholder understanding their own project better than when they walked in.
+- **Push on assumptions** without telegraphing pushback. Just ask the question that surfaces the gap.
+- **Never say:** "let me push on this," "I want to make sure I understand," "can you clarify," "that's vague," or any meta-commentary. Just engage directly.
+- **Bring your expertise.** Flag common pitfalls. Offer useful frames. Challenge circular reasoning by reframing, not by labeling it circular.
 
-## YOUR CONVERSATIONAL APPROACH
-- Start open and curious. Let them tell you what's going on. Listen for what they're NOT saying as much as what they are.
-- Follow the thread of the conversation. If they mention something interesting, go there. Don't abandon a rich thread to get to the next "question."
-- When you sense they haven't fully thought something through, explore it with them rather than flagging it. Ask "what would that look like in practice?" not "can you clarify?"
-- When something is vague or circular, redirect naturally: reframe, offer a concrete example, or work backward from the decision. Never say "that's vague."
-- Help them arrive at insights they didn't know they had. A great intake conversation should leave the stakeholder feeling like they understand their own project better than when they walked in.
-- Bring your expertise into the conversation — flag common pitfalls, offer a useful frame, push on assumptions. You're a thought partner, not a transcriptionist.
-- Never telegraph pushback. Just ask the question that surfaces the gap.
-- One thought at a time. Never list multiple questions in sequence.
-- No meta-commentary ("Let me push on this," "I want to make sure I understand"). Just engage directly.
+## WHAT YOU NEED TO UNDERSTAND (your internal compass, not a script)
+Through natural conversation, come to understand:
 
-## WHAT YOU NEED TO LEARN (treat these as your internal checklist, NOT a script)
-The underlying structure you're mapping the conversation to:
+1. **The real problem** — What's the business situation? What decision hangs on this? Why now?
+2. **What they'll do with the answer** — If you hand them perfect research, what happens next? What changes?
+3. **Their current thinking** — What do they already believe? How confident are they? What would change their mind?
+4. **Who we're studying** — What consumers, what geography, are there meaningful sub-groups?
+5. **What already exists** — What data, past research, or intuition do they have? What gap does this uniquely fill?
+6. **The stakes** — How big is this for the business? What's the risk of not doing it?
+7. **Logistics** — Who's involved, who's the sponsor, when do they need it? (Let these come out naturally — don't front-load admin.)
 
-**Who & When:** Project name, who's requesting it, who's the sponsor, who else is involved, when they need it.
+## PACING
+- Start with the substance (the problem, the decision, the why). Admin comes later naturally.
+- Go deep before going broad. Understand the core before asking about audience, geography, logistics.
+- Use as few questions as possible to get as much as possible. Quality over quantity.
+- When you feel you have a rich enough picture, offer to wrap up: *"I think I have what I need. Want me to write this up?"*
 
-**The Core Problem:** What's the business situation? What specific question needs answering? What decision hangs on this? What will they actually do with the results?
+## WHAT YOU'VE LEARNED SO FAR
+{conversation_summary if conversation_summary else "(Conversation just started — nothing captured yet.)"}
 
-**Their Current Thinking:** What do they already believe? What data backs that up? How confident are they? What would change their mind?
+## GENERATING THE OUTPUT
+When the stakeholder confirms they're ready to wrap up, generate a research brief using EXACTLY this format:
 
-**The Research Itself:** Who do we need to talk to? Where? Are there sub-groups that matter?
+===BRIEF_OUTPUT_START===
+[Write a professional research brief as if written BY a senior CRI researcher FOR the CRI team. This is NOT a filled-out form — it is a synthesized, narrative brief. It should read like a smart colleague summarizing the request after a real conversation.
 
-**What's Already Known:** What existing research, data, or experience bears on this? What's the gap that this uniquely fills?
+Structure it as:
 
-**The Stakes:** What's the business impact? What happens if we don't do this? What metrics does it touch?
+**Project:** [name and requestor]
+**Deadline:** [timing]
+**Sponsor:** [if known]
 
-**Self-Assessment:** Help them land on: size of impact (High/Medium/Low), their confidence level going in, type of decision (irreversible vs. pivotable), overall risk of doing nothing.
+**The Situation**
+[2-3 sentences: what's going on in the business, why this research is needed now]
 
-## CONVERSATION FLOW PRINCIPLES
-- Don't front-load administrative questions (name, timing, sponsor). Let those come out naturally in context.
-- Start with the substance — what's going on, what's the problem, why now. The who and when will surface.
-- Go deep before going broad. Thoroughly understand the core problem before shifting to audience, geography, logistics.
-- The final evaluation (impact, confidence, risk, decision type) should feel like a natural landing — "so given all of that, how would you characterize the stakes here?" — not a separate section.
-- Aim to get MORE out of them than a form would. A form gets what people know they know. A good conversation surfaces what they didn't realize they knew, or didn't realize they were assuming.
+**The Core Question**
+[The actual research question in plain language — what do we need to understand?]
 
-## WHAT YOU'VE CAPTURED SO FAR
-{captured_summary if captured_summary else "(Conversation just started.)"}
+**What They'll Do With It**
+[What decision or action this research will feed — be specific]
 
-## WHAT'S STILL MISSING
-{missing_text if missing_text else "(All areas covered — ready to generate output.)"}
+**Their Current Hypothesis**
+[What they believe going in, what data backs it, how confident they are]
 
-## COVERAGE: {covered_fields}/{total_fields} fields ({pct}%)
+**Who We're Studying**
+[Target consumers, geography, any key sub-groups]
 
-## WRAPPING UP
-When all critical fields and most important fields are covered (roughly 75%+), offer to summarize and generate the intake document. Frame it as: "I think I have what I need — want me to pull this together into the intake form?"
+**What We Already Know**
+[Existing data, past research, what this uniquely adds]
 
-When generating the final output, respond with EXACTLY this format:
+**The Stakes**
+[Business impact, risk of not doing it, metrics it touches]
 
-===FORM_OUTPUT_START===
-[A clean, professional completed intake form organized by section, using the field labels from the form schema. For fields not discussed, write "To be determined in scoping session with CRI."]
-===FORM_OUTPUT_END===
+**Researcher Notes**
+[Any flags, open questions, assumptions to pressure-test, or things to clarify in scoping. This is your professional editorial — use it.]
+]
+===BRIEF_OUTPUT_END===
 
 ===EMAIL_SUMMARY_START===
-[A concise, email-ready summary for CRI_Project_Intake@bose.com. Include: project name, requestor, key business question, timing, and a brief paragraph on why this matters. Under 200 words. Professional but human — not corporate boilerplate.]
+[A short, human summary — 3-4 sentences max — for the intake notification email. Just the essence: who, what, why it matters, when needed. No corporate boilerplate.]
 ===EMAIL_SUMMARY_END===
 
-## EXTRACTION (hidden — system use only)
-After EVERY response, append this block:
+## EXTRACTION (system use only — never show this to user)
+After EVERY response (including conversational ones), append:
 
 ===EXTRACTED_START===
 {{"field_key": "value or null"}}
 ===EXTRACTED_END===
 
-Include ALL field keys every time (null for not yet captured). Only populate when the USER has provided substantive information — not from your own questions or suggestions.
+Include ALL keys. Only populate from information the USER provided.
 
 Field keys: {json.dumps(get_all_field_keys(), indent=2)}
 """
@@ -436,13 +420,19 @@ def extract_fields_from_response(response_text, current_fields):
 def extract_form_output(response_text):
     form_output = None
     email_output = None
-    try:
-        if "===FORM_OUTPUT_START===" in response_text:
-            start = response_text.index("===FORM_OUTPUT_START===") + len("===FORM_OUTPUT_START===")
-            end = response_text.index("===FORM_OUTPUT_END===")
-            form_output = response_text[start:end].strip()
-    except ValueError:
-        pass
+    # Support new BRIEF_OUTPUT marker (preferred) and legacy FORM_OUTPUT marker
+    for start_marker, end_marker in [
+        ("===BRIEF_OUTPUT_START===", "===BRIEF_OUTPUT_END==="),
+        ("===FORM_OUTPUT_START===", "===FORM_OUTPUT_END==="),
+    ]:
+        try:
+            if start_marker in response_text:
+                start = response_text.index(start_marker) + len(start_marker)
+                end = response_text.index(end_marker)
+                form_output = response_text[start:end].strip()
+                break
+        except ValueError:
+            pass
     try:
         if "===EMAIL_SUMMARY_START===" in response_text:
             start = response_text.index("===EMAIL_SUMMARY_START===") + len("===EMAIL_SUMMARY_START===")
@@ -457,6 +447,7 @@ def clean_response_for_display(response_text):
     display = response_text
     for marker_pair in [
         ("===EXTRACTED_START===", "===EXTRACTED_END==="),
+        ("===BRIEF_OUTPUT_START===", "===BRIEF_OUTPUT_END==="),
         ("===FORM_OUTPUT_START===", "===FORM_OUTPUT_END==="),
         ("===EMAIL_SUMMARY_START===", "===EMAIL_SUMMARY_END==="),
     ]:
@@ -817,9 +808,15 @@ def send_intake_email(form_text: str, email_summary: str, project_name: str, ses
         return False, "Email credentials not configured. Add GMAIL_ADDRESS and GMAIL_APP_PASSWORD to your .env file."
 
     # Build the email
-    subject = f"CRI Research Intake: {project_name or 'New Request'} [{session_id}]"
+    subject = f"Research Request: {project_name or 'New Request'} [{session_id}]"
 
-    # HTML body — email summary up top, full form below
+    # Convert markdown brief to HTML for email
+    try:
+        import markdown as md_lib
+        brief_html_content = md_lib.markdown(form_text, extensions=["extra"])
+    except Exception:
+        brief_html_content = f"<pre style='white-space:pre-wrap;'>{form_text}</pre>"
+
     html_body = f"""
 <html><body style="font-family: Arial, sans-serif; color: #131317; max-width: 680px; margin: 0 auto;">
 
@@ -827,25 +824,23 @@ def send_intake_email(form_text: str, email_summary: str, project_name: str, ses
   <div style="font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #B4BEC7; margin-bottom: 4px;">
     Bose · Consumer Research &amp; Insights
   </div>
-  <div style="font-size: 22px; font-weight: 900;">Research Intake Submission</div>
+  <div style="font-size: 22px; font-weight: 900;">New Research Request</div>
 </div>
 
-<div style="background: #F1EFEE; padding: 20px; margin-bottom: 28px; border-radius: 2px;">
-  <div style="font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #7F8891; margin-bottom: 10px;">Summary</div>
-  <div style="font-size: 14px; line-height: 1.6; white-space: pre-wrap;">{email_summary}</div>
-</div>
+{f'<div style="background: #F1EFEE; padding: 16px 20px; margin-bottom: 28px; border-radius: 2px; font-size: 14px; line-height: 1.6; color: #3E474A;">{email_summary}</div>' if email_summary else ''}
 
-<div style="font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #7F8891; margin-bottom: 10px;">Full Intake Form</div>
-<div style="font-size: 14px; line-height: 1.7; white-space: pre-wrap; border-left: 3px solid #CFC8C5; padding-left: 16px;">{form_text}</div>
+<div style="font-size: 14px; line-height: 1.8;">
+{brief_html_content}
+</div>
 
 <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #CFC8C5; font-size: 11px; color: #B4BEC7;">
-  Submitted via CRI Research Intake Assistant · Session ID: {session_id}
+  Submitted via CRI Research Intake · Session ID: {session_id}
 </div>
 </body></html>
 """
 
     # Plain text fallback
-    plain_body = f"CRI Research Intake: {project_name}\n\n{email_summary}\n\n---\n\n{form_text}\n\nSession ID: {session_id}"
+    plain_body = f"CRI Research Request: {project_name}\n\n{email_summary}\n\n---\n\n{form_text}\n\nSession ID: {session_id}"
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -933,52 +928,6 @@ def main():
         else:
             st.markdown(
                 "<div style='font-size:12px;color:#B4BEC7;margin-top:-8px;'>○ Demo mode</div>",
-                unsafe_allow_html=True,
-            )
-
-        st.divider()
-
-        # Coverage tracker
-        st.markdown(
-            "<div style='font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;"
-            "color:#B4BEC7;margin-bottom:12px;'>Coverage</div>",
-            unsafe_allow_html=True,
-        )
-
-        if "extracted_fields" in st.session_state:
-            cov = compute_coverage(st.session_state.extracted_fields)
-            st.progress(cov["pct"] / 100)
-            st.markdown(
-                f"<div style='font-size:12px;color:#B4BEC7;margin-top:-4px;margin-bottom:12px;'>"
-                f"{cov['covered']}/{cov['total']} fields &nbsp;·&nbsp; {cov['pct']}%</div>",
-                unsafe_allow_html=True,
-            )
-
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Critical", f"{cov['critical_covered']}/{cov['critical_total']}")
-            with col2:
-                st.metric("Important", f"{cov['important_covered']}/{cov['important_total']}")
-
-            with st.expander("Field detail"):
-                for section_key, section in FORM_SCHEMA.items():
-                    st.markdown(
-                        f"<div style='font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;"
-                        f"color:#7F8891;margin:10px 0 4px;'>{section['section_label']}</div>",
-                        unsafe_allow_html=True,
-                    )
-                    for field_key, field_info in section["fields"].items():
-                        value = st.session_state.extracted_fields.get(field_key)
-                        icon = "✓" if value else {"critical": "○", "important": "○", "nice_to_have": "·"}[field_info["priority"]]
-                        color = "#00A1E0" if value else {"critical": "#F0523D", "important": "#B4BEC7", "nice_to_have": "#3E474A"}[field_info["priority"]]
-                        st.markdown(
-                            f"<div style='font-size:11px;color:{color};padding:2px 0;'>"
-                            f"{icon} {field_info['label']}</div>",
-                            unsafe_allow_html=True,
-                        )
-        else:
-            st.markdown(
-                "<div style='font-size:12px;color:#7F8891;'>Start a conversation to track coverage.</div>",
                 unsafe_allow_html=True,
             )
 
@@ -1074,27 +1023,20 @@ def main():
                     unsafe_allow_html=True,
                 )
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown(
-                "<div style='font-size:11px;font-weight:600;letter-spacing:2px;text-transform:uppercase;"
-                "color:#7F8891;margin-bottom:12px;'>Completed Intake Form</div>",
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                f"<div class='output-panel'>{st.session_state.form_output}</div>",
-                unsafe_allow_html=True,
-            )
-        with col2:
-            st.markdown(
-                "<div style='font-size:11px;font-weight:600;letter-spacing:2px;text-transform:uppercase;"
-                "color:#7F8891;margin-bottom:12px;'>Email Summary</div>",
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                f"<div class='output-panel'>{st.session_state.email_output or 'No email summary generated.'}</div>",
-                unsafe_allow_html=True,
-            )
+        st.markdown(
+            "<div style='font-size:11px;font-weight:600;letter-spacing:2px;text-transform:uppercase;"
+            "color:#7F8891;margin-bottom:12px;'>Research Brief</div>",
+            unsafe_allow_html=True,
+        )
+        import markdown as md_lib
+        try:
+            brief_html = md_lib.markdown(st.session_state.form_output, extensions=["extra"])
+        except Exception:
+            brief_html = st.session_state.form_output
+        st.markdown(
+            f"<div class='output-panel'>{brief_html}</div>",
+            unsafe_allow_html=True,
+        )
 
         st.divider()
 
@@ -1138,19 +1080,11 @@ def main():
 
         with bcol2:
             st.download_button(
-                "Download Form",
+                "Download Brief",
                 st.session_state.form_output,
-                file_name=f"CRI_Intake_{st.session_state.session_id}.md",
+                file_name=f"CRI_Brief_{st.session_state.session_id}.md",
                 mime="text/markdown",
             )
-        with bcol3:
-            if st.session_state.email_output:
-                st.download_button(
-                    "Download Summary",
-                    st.session_state.email_output,
-                    file_name=f"CRI_Email_{st.session_state.session_id}.md",
-                    mime="text/markdown",
-                )
 
     # ── Chat input ──
     if prompt := st.chat_input("What's going on with your project?"):
