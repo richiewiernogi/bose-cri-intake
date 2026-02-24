@@ -1,0 +1,14 @@
+# Never commit credentials
+.env
+
+# Streamlit secrets (used in cloud deployment)
+.streamlit/secrets.toml
+
+# Session files — local only
+sessions/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store

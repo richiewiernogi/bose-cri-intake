@@ -1,0 +1,1206 @@
+import streamlit as st
+import json
+import os
+import datetime
+import smtplib
+import ssl
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from pathlib import Path
+
+# Load .env for local development
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+# Also pull from Streamlit Cloud secrets if running hosted
+try:
+    for _key in ["GMAIL_ADDRESS", "GMAIL_APP_PASSWORD", "CRI_RECIPIENT", "ANTHROPIC_API_KEY"]:
+        if _key in st.secrets and not os.environ.get(_key):
+            os.environ[_key] = st.secrets[_key]
+except Exception:
+    pass
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+APP_TITLE = "CRI Research Intake"
+SESSIONS_DIR = Path("sessions")
+SESSIONS_DIR.mkdir(exist_ok=True)
+
+FORM_SCHEMA = {
+    "project_basics": {
+        "section_label": "Project Basics",
+        "fields": {
+            "project_name": {
+                "label": "Project Name",
+                "description": "A short, descriptive name for this research project.",
+                "priority": "critical",
+            },
+            "requestor": {
+                "label": "Requestor",
+                "description": "Who is submitting this request?",
+                "priority": "critical",
+            },
+            "day_to_day_contact": {
+                "label": "Day-to-Day Project Contact",
+                "description": "Who should CRI work with on a daily basis?",
+                "priority": "important",
+            },
+            "sponsor": {
+                "label": "Sponsor",
+                "description": "Who is the executive sponsor backing this work?",
+                "priority": "important",
+            },
+            "stakeholders_scope": {
+                "label": "Stakeholders for Input to Scope",
+                "description": "Who should weigh in on what we research and how?",
+                "priority": "important",
+            },
+            "stakeholders_report": {
+                "label": "Additional Stakeholders for Report Out",
+                "description": "Who else needs to see the results?",
+                "priority": "nice_to_have",
+            },
+            "timing": {
+                "label": "Timing",
+                "description": "When do you need this? Any hard deadlines?",
+                "priority": "critical",
+            },
+        },
+    },
+    "need_and_purpose": {
+        "section_label": "Project Need and Purpose",
+        "fields": {
+            "business_context": {
+                "label": "Business Context & Justification",
+                "description": "Why is this work needed now? What business situation is driving this?",
+                "priority": "critical",
+            },
+            "primary_business_questions": {
+                "label": "Primary Business Question(s)",
+                "description": "What specific business question are you trying to answer? What decisions will the results drive?",
+                "priority": "critical",
+            },
+            "intended_decision_action": {
+                "label": "Intended Decision/Action",
+                "description": "What will you actually DO with the results?",
+                "priority": "critical",
+            },
+            "inputs_to_decision": {
+                "label": "Inputs to Decision",
+                "description": "What specific inputs are you looking for from CRI? How will these feed the decision?",
+                "priority": "critical",
+            },
+            "current_hypothesis": {
+                "label": "Current Hypothesis",
+                "description": "What do you currently believe the answer is? What assumptions are you making? What data supports those assumptions?",
+                "priority": "critical",
+            },
+            "primary_objective": {
+                "label": "Primary Objective",
+                "description": "Explore, Validate, Track/Measure, or Prioritize?",
+                "priority": "important",
+            },
+        },
+    },
+    "existing_knowledge": {
+        "section_label": "Existing Knowledge",
+        "fields": {
+            "existing_information": {
+                "label": "Existing Information & Other Inputs",
+                "description": "What do we already know? What existing data, dashboards, or past research exists?",
+                "priority": "important",
+            },
+            "gap_this_fills": {
+                "label": "Gap This Project Fills",
+                "description": "What unique contribution will this research provide that isn't available elsewhere?",
+                "priority": "important",
+            },
+        },
+    },
+    "project_details": {
+        "section_label": "Project Details",
+        "fields": {
+            "core_audience": {
+                "label": "Core Audience",
+                "description": "Who are the target consumers for this research? Why this audience?",
+                "priority": "critical",
+            },
+            "key_subgroups": {
+                "label": "Key Sub-groups",
+                "description": "Any key sub-groups or comparisons needed?",
+                "priority": "important",
+            },
+            "geography": {
+                "label": "Geography",
+                "description": "What geographies? CRI is primarily US-funded; other regions may need co-funding.",
+                "priority": "important",
+            },
+            "output_requested": {
+                "label": "Output Requested",
+                "description": "Any specific deliverables expected? MVP?",
+                "priority": "nice_to_have",
+            },
+        },
+    },
+    "project_impact": {
+        "section_label": "Project Impact",
+        "fields": {
+            "scope_of_impact": {
+                "label": "Scope of Impact",
+                "description": "How big of an impact on Bose? Revenue, spend, reach?",
+                "priority": "important",
+            },
+            "risk_of_not_doing": {
+                "label": "Risk of Not Doing",
+                "description": "What happens if we don't do this research?",
+                "priority": "important",
+            },
+            "key_metrics": {
+                "label": "Key Metrics",
+                "description": "What business metrics/KPIs will this influence?",
+                "priority": "important",
+            },
+            "what_success_looks_like": {
+                "label": "What Success Looks Like",
+                "description": "What's a realistic target for how this work will move the needle?",
+                "priority": "nice_to_have",
+            },
+        },
+    },
+    "final_evaluation": {
+        "section_label": "Final Evaluation",
+        "fields": {
+            "size_of_business_impact": {
+                "label": "Size of Business Impact",
+                "description": "High / Medium / Low",
+                "priority": "important",
+            },
+            "confidence_level": {
+                "label": "Confidence Level",
+                "description": "High / Medium / Low — how much do we already know?",
+                "priority": "important",
+            },
+            "type_of_decision": {
+                "label": "Type of Decision",
+                "description": "Irreversible / Moderate Flexibility / Easy to Pivot",
+                "priority": "important",
+            },
+            "overall_risk_of_doing_nothing": {
+                "label": "Overall Risk of Doing Nothing",
+                "description": "High / Medium / Low",
+                "priority": "important",
+            },
+        },
+    },
+}
+
+
+def get_all_field_keys():
+    keys = []
+    for section in FORM_SCHEMA.values():
+        keys.extend(section["fields"].keys())
+    return keys
+
+
+def get_field_info(field_key):
+    for section in FORM_SCHEMA.values():
+        if field_key in section["fields"]:
+            return section["fields"][field_key]
+    return None
+
+
+# ---------------------------------------------------------------------------
+# System Prompt
+# ---------------------------------------------------------------------------
+def build_system_prompt(extracted_fields: dict, coverage: dict):
+    captured_summary = ""
+    missing_critical = []
+    missing_important = []
+    missing_nice = []
+
+    for section_key, section in FORM_SCHEMA.items():
+        for field_key, field_info in section["fields"].items():
+            value = extracted_fields.get(field_key)
+            if value:
+                captured_summary += f"  - {field_info['label']}: {value}\n"
+            else:
+                bucket = {
+                    "critical": missing_critical,
+                    "important": missing_important,
+                    "nice_to_have": missing_nice,
+                }
+                bucket[field_info["priority"]].append(
+                    f"{field_info['label']}: {field_info['description']}"
+                )
+
+    missing_text = ""
+    if missing_critical:
+        missing_text += "CRITICAL (must cover):\n" + "\n".join(
+            f"  - {m}" for m in missing_critical
+        ) + "\n\n"
+    if missing_important:
+        missing_text += "IMPORTANT (should cover):\n" + "\n".join(
+            f"  - {m}" for m in missing_important
+        ) + "\n\n"
+    if missing_nice:
+        missing_text += "NICE TO HAVE:\n" + "\n".join(
+            f"  - {m}" for m in missing_nice
+        ) + "\n\n"
+
+    total_fields = len(get_all_field_keys())
+    covered_fields = sum(1 for v in extracted_fields.values() if v)
+    pct = int((covered_fields / total_fields) * 100) if total_fields > 0 else 0
+
+    system_prompt = f"""You are a principal-level consumer insights researcher at Bose's CRI (Consumer Research & Insights) team. You are having a conversation with a business stakeholder who needs to submit a research request.
+
+## WHO YOU ARE
+You're the kind of researcher every stakeholder wishes they had. Sharp, genuinely curious, warm, collaborative. You've seen a thousand research briefs and you know what separates the ones that produce great work from the ones that waste everyone's time. You care about getting this right — not for process reasons, but because bad briefs lead to bad research, and bad research leads to bad decisions.
+
+You are NOT a form. You are NOT an intake bot running through a checklist. You are a colleague having a real conversation.
+
+## TONE & REGISTER
+You are sharp and substantive — not stiff, not breezy. Think: the smartest person in the room who doesn't need to prove it. Collegial and direct, with a dry wit when it fits naturally. You don't open with "Hey" or "Sure thing" — you just engage with what was said, like someone who's already thinking three steps ahead. Warm without being effusive. Confident without being clinical.
+
+Never use filler affirmations ("Great point," "Absolutely," "That's helpful"). Never open with greetings or pleasantries. Just respond — pick up the thread and move it forward.
+
+## YOUR CONVERSATIONAL APPROACH
+- Start open and curious. Let them tell you what's going on. Listen for what they're NOT saying as much as what they are.
+- Follow the thread of the conversation. If they mention something interesting, go there. Don't abandon a rich thread to get to the next "question."
+- When you sense they haven't fully thought something through, explore it with them rather than flagging it. Ask "what would that look like in practice?" not "can you clarify?"
+- When something is vague or circular, redirect naturally: reframe, offer a concrete example, or work backward from the decision. Never say "that's vague."
+- Help them arrive at insights they didn't know they had. A great intake conversation should leave the stakeholder feeling like they understand their own project better than when they walked in.
+- Bring your expertise into the conversation — flag common pitfalls, offer a useful frame, push on assumptions. You're a thought partner, not a transcriptionist.
+- Never telegraph pushback. Just ask the question that surfaces the gap.
+- One thought at a time. Never list multiple questions in sequence.
+- No meta-commentary ("Let me push on this," "I want to make sure I understand"). Just engage directly.
+
+## WHAT YOU NEED TO LEARN (treat these as your internal checklist, NOT a script)
+The underlying structure you're mapping the conversation to:
+
+**Who & When:** Project name, who's requesting it, who's the sponsor, who else is involved, when they need it.
+
+**The Core Problem:** What's the business situation? What specific question needs answering? What decision hangs on this? What will they actually do with the results?
+
+**Their Current Thinking:** What do they already believe? What data backs that up? How confident are they? What would change their mind?
+
+**The Research Itself:** Who do we need to talk to? Where? Are there sub-groups that matter?
+
+**What's Already Known:** What existing research, data, or experience bears on this? What's the gap that this uniquely fills?
+
+**The Stakes:** What's the business impact? What happens if we don't do this? What metrics does it touch?
+
+**Self-Assessment:** Help them land on: size of impact (High/Medium/Low), their confidence level going in, type of decision (irreversible vs. pivotable), overall risk of doing nothing.
+
+## CONVERSATION FLOW PRINCIPLES
+- Don't front-load administrative questions (name, timing, sponsor). Let those come out naturally in context.
+- Start with the substance — what's going on, what's the problem, why now. The who and when will surface.
+- Go deep before going broad. Thoroughly understand the core problem before shifting to audience, geography, logistics.
+- The final evaluation (impact, confidence, risk, decision type) should feel like a natural landing — "so given all of that, how would you characterize the stakes here?" — not a separate section.
+- Aim to get MORE out of them than a form would. A form gets what people know they know. A good conversation surfaces what they didn't realize they knew, or didn't realize they were assuming.
+
+## WHAT YOU'VE CAPTURED SO FAR
+{captured_summary if captured_summary else "(Conversation just started.)"}
+
+## WHAT'S STILL MISSING
+{missing_text if missing_text else "(All areas covered — ready to generate output.)"}
+
+## COVERAGE: {covered_fields}/{total_fields} fields ({pct}%)
+
+## WRAPPING UP
+When all critical fields and most important fields are covered (roughly 75%+), offer to summarize and generate the intake document. Frame it as: "I think I have what I need — want me to pull this together into the intake form?"
+
+When generating the final output, respond with EXACTLY this format:
+
+===FORM_OUTPUT_START===
+[A clean, professional completed intake form organized by section, using the field labels from the form schema. For fields not discussed, write "To be determined in scoping session with CRI."]
+===FORM_OUTPUT_END===
+
+===EMAIL_SUMMARY_START===
+[A concise, email-ready summary for CRI_Project_Intake@bose.com. Include: project name, requestor, key business question, timing, and a brief paragraph on why this matters. Under 200 words. Professional but human — not corporate boilerplate.]
+===EMAIL_SUMMARY_END===
+
+## EXTRACTION (hidden — system use only)
+After EVERY response, append this block:
+
+===EXTRACTED_START===
+{{"field_key": "value or null"}}
+===EXTRACTED_END===
+
+Include ALL field keys every time (null for not yet captured). Only populate when the USER has provided substantive information — not from your own questions or suggestions.
+
+Field keys: {json.dumps(get_all_field_keys(), indent=2)}
+"""
+    return system_prompt
+
+
+# ---------------------------------------------------------------------------
+# LLM Integration
+# ---------------------------------------------------------------------------
+def call_llm(messages, system_prompt, api_key=None):
+    if api_key:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            response = client.messages.create(
+                model="claude-opus-4-5",
+                max_tokens=4096,
+                system=system_prompt,
+                messages=messages,
+            )
+            return response.content[0].text
+        except Exception as e:
+            return f"**API Error:** {str(e)}\n\nPlease check your API key and try again.\n\n===EXTRACTED_START===\n{{}}\n===EXTRACTED_END==="
+    else:
+        return run_demo_mode(messages)
+
+
+def run_demo_mode(messages):
+    turn = len([m for m in messages if m["role"] == "user"])
+    null_fields = json.dumps({key: None for key in get_all_field_keys()})
+
+    demo_responses = [
+        f"""What's going on — tell me about the project.
+
+===EXTRACTED_START===
+{null_fields}
+===EXTRACTED_END===""",
+
+        f"""Got it. And what's the actual decision this needs to feed? Like, if we came back with the perfect answer, what would you do with it?
+
+===EXTRACTED_START===
+{json.dumps({**{key: None for key in get_all_field_keys()}, "business_context": "Captured from user response"})}
+===EXTRACTED_END===""",
+
+        f"""What's your current read on it — do you have a hypothesis going in?
+
+===EXTRACTED_START===
+{json.dumps({**{key: None for key in get_all_field_keys()}, "business_context": "Captured", "primary_business_questions": "Captured", "intended_decision_action": "Captured"})}
+===EXTRACTED_END===""",
+
+        f"""Who are we actually talking to for this — what's the consumer target?
+
+===EXTRACTED_START===
+{json.dumps({**{key: None for key in get_all_field_keys()}, "business_context": "Captured", "primary_business_questions": "Captured", "intended_decision_action": "Captured", "current_hypothesis": "Captured", "existing_information": "Captured"})}
+===EXTRACTED_END===""",
+
+        f"""How big is this for the business — are we talking a major bet or more of a supporting input?
+
+===EXTRACTED_START===
+{json.dumps({**{key: None for key in get_all_field_keys()}, "business_context": "Captured", "primary_business_questions": "Captured", "intended_decision_action": "Captured", "current_hypothesis": "Captured", "existing_information": "Captured", "core_audience": "Captured", "geography": "Captured", "key_subgroups": "Captured"})}
+===EXTRACTED_END===""",
+
+        f"""I think I have what I need — want me to pull this together into the intake form?
+
+*(In live mode with an API key, I'd generate the completed form and email summary here.)*
+
+===EXTRACTED_START===
+{json.dumps({key: "Captured" for key in get_all_field_keys()})}
+===EXTRACTED_END===""",
+    ]
+
+    if turn <= len(demo_responses):
+        return demo_responses[turn - 1]
+    else:
+        return f"""Add your Anthropic API key in the sidebar to enable the full experience, including generating the completed intake form.
+
+===EXTRACTED_START===
+{{}}
+===EXTRACTED_END==="""
+
+
+# ---------------------------------------------------------------------------
+# Extraction & Coverage
+# ---------------------------------------------------------------------------
+def extract_fields_from_response(response_text, current_fields):
+    updated = dict(current_fields)
+    try:
+        start_marker = "===EXTRACTED_START==="
+        end_marker = "===EXTRACTED_END==="
+        if start_marker in response_text and end_marker in response_text:
+            start = response_text.index(start_marker) + len(start_marker)
+            end = response_text.index(end_marker)
+            json_str = response_text[start:end].strip()
+            extracted = json.loads(json_str)
+            for key, value in extracted.items():
+                if value is not None and value != "null":
+                    updated[key] = value
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return updated
+
+
+def extract_form_output(response_text):
+    form_output = None
+    email_output = None
+    try:
+        if "===FORM_OUTPUT_START===" in response_text:
+            start = response_text.index("===FORM_OUTPUT_START===") + len("===FORM_OUTPUT_START===")
+            end = response_text.index("===FORM_OUTPUT_END===")
+            form_output = response_text[start:end].strip()
+    except ValueError:
+        pass
+    try:
+        if "===EMAIL_SUMMARY_START===" in response_text:
+            start = response_text.index("===EMAIL_SUMMARY_START===") + len("===EMAIL_SUMMARY_START===")
+            end = response_text.index("===EMAIL_SUMMARY_END===")
+            email_output = response_text[start:end].strip()
+    except ValueError:
+        pass
+    return form_output, email_output
+
+
+def clean_response_for_display(response_text):
+    display = response_text
+    for marker_pair in [
+        ("===EXTRACTED_START===", "===EXTRACTED_END==="),
+        ("===FORM_OUTPUT_START===", "===FORM_OUTPUT_END==="),
+        ("===EMAIL_SUMMARY_START===", "===EMAIL_SUMMARY_END==="),
+    ]:
+        start_marker, end_marker = marker_pair
+        while start_marker in display and end_marker in display:
+            start = display.index(start_marker)
+            end = display.index(end_marker) + len(end_marker)
+            display = display[:start] + display[end:]
+    return display.strip()
+
+
+def compute_coverage(extracted_fields):
+    total = covered = critical_total = critical_covered = important_total = important_covered = 0
+    for section in FORM_SCHEMA.values():
+        for field_key, field_info in section["fields"].items():
+            total += 1
+            has_value = bool(extracted_fields.get(field_key))
+            if has_value:
+                covered += 1
+            if field_info["priority"] == "critical":
+                critical_total += 1
+                if has_value:
+                    critical_covered += 1
+            elif field_info["priority"] == "important":
+                important_total += 1
+                if has_value:
+                    important_covered += 1
+    return {
+        "total": total,
+        "covered": covered,
+        "pct": int((covered / total) * 100) if total > 0 else 0,
+        "critical_total": critical_total,
+        "critical_covered": critical_covered,
+        "important_total": important_total,
+        "important_covered": important_covered,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Session Persistence
+# ---------------------------------------------------------------------------
+def save_session(session_id, messages, extracted_fields, form_output, email_output):
+    session_data = {
+        "session_id": session_id,
+        "timestamp": datetime.datetime.now().isoformat(),
+        "messages": messages,
+        "extracted_fields": extracted_fields,
+        "form_output": form_output,
+        "email_output": email_output,
+        "coverage": compute_coverage(extracted_fields),
+    }
+    filepath = SESSIONS_DIR / f"{session_id}.json"
+    with open(filepath, "w") as f:
+        json.dump(session_data, f, indent=2)
+
+
+def load_session(session_id):
+    filepath = SESSIONS_DIR / f"{session_id}.json"
+    if filepath.exists():
+        with open(filepath) as f:
+            return json.load(f)
+    return None
+
+
+def list_sessions():
+    sessions = []
+    for filepath in sorted(SESSIONS_DIR.glob("*.json"), reverse=True):
+        try:
+            with open(filepath) as f:
+                data = json.load(f)
+                sessions.append({
+                    "id": data.get("session_id", filepath.stem),
+                    "timestamp": data.get("timestamp", "Unknown"),
+                    "project_name": data.get("extracted_fields", {}).get("project_name") or "Untitled",
+                    "coverage": data.get("coverage", {}).get("pct", 0),
+                })
+        except (json.JSONDecodeError, KeyError):
+            pass
+    return sessions
+
+
+# ---------------------------------------------------------------------------
+# Bose Brand CSS
+# ---------------------------------------------------------------------------
+BOSE_CSS = """
+<style>
+/* ── Google Fonts fallback (Bose uses proprietary fonts; Inter is closest public match) ── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap');
+
+/* ── Root tokens ── */
+:root {
+    --bose-black:      #131317;
+    --bose-white:      #FFFFFF;
+    --bose-warm-bg:    #F8F1E7;
+    --bose-light-bg:   #F1EFEE;
+    --bose-mid-gray:   #3E474A;
+    --bose-soft-gray:  #B4BEC7;
+    --bose-divider:    #CFC8C5;
+    --bose-accent:     #00A1E0;
+    --bose-text:       #131317;
+}
+
+/* ── Global resets ── */
+html, body, [class*="css"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+    color: var(--bose-text) !important;
+}
+
+/* ── App background ── */
+.stApp {
+    background-color: var(--bose-white) !important;
+}
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {
+    background-color: var(--bose-black) !important;
+    border-right: none !important;
+}
+[data-testid="stSidebar"] * {
+    color: var(--bose-white) !important;
+}
+[data-testid="stSidebar"] .stTextInput input {
+    background-color: #1e1e24 !important;
+    border: 1px solid #3E474A !important;
+    border-radius: 2px !important;
+    color: var(--bose-white) !important;
+    font-size: 13px !important;
+}
+[data-testid="stSidebar"] .stProgress > div > div {
+    background-color: var(--bose-accent) !important;
+}
+[data-testid="stSidebar"] .stProgress {
+    background-color: #2a2a30 !important;
+}
+[data-testid="stSidebar"] hr {
+    border-color: #2a2a30 !important;
+}
+[data-testid="stSidebar"] .stButton > button {
+    background-color: transparent !important;
+    border: 1px solid #3E474A !important;
+    border-radius: 2px !important;
+    color: var(--bose-white) !important;
+    font-size: 12px !important;
+    font-weight: 400 !important;
+    text-align: left !important;
+    width: 100% !important;
+    padding: 6px 10px !important;
+    letter-spacing: 0.3px !important;
+    transition: border-color 0.2s, background-color 0.2s !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    border-color: var(--bose-accent) !important;
+    background-color: #1e1e24 !important;
+}
+[data-testid="stSidebar"] .stAlert {
+    background-color: #1e1e24 !important;
+    border: 1px solid #3E474A !important;
+    border-radius: 2px !important;
+    font-size: 12px !important;
+}
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+    font-weight: 700 !important;
+    letter-spacing: -0.3px !important;
+}
+
+/* ── Main header ── */
+.main-header {
+    border-bottom: 1px solid var(--bose-divider);
+    padding-bottom: 20px;
+    margin-bottom: 32px;
+}
+.main-header .brand-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--bose-soft-gray);
+    margin-bottom: 4px;
+}
+.main-header h1 {
+    font-size: 28px !important;
+    font-weight: 900 !important;
+    letter-spacing: -0.5px !important;
+    color: var(--bose-black) !important;
+    margin: 0 !important;
+    line-height: 1.1 !important;
+}
+.main-header .subtitle {
+    font-size: 14px;
+    color: var(--bose-mid-gray);
+    margin-top: 6px;
+    font-weight: 400;
+}
+
+/* ── Custom chat messages (rendered via st.markdown, not st.chat_message) ── */
+.bose-msg {
+    padding: 20px 0;
+    border-bottom: 1px solid #F1EFEE;
+}
+.bose-msg-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--bose-soft-gray);
+    margin-bottom: 8px;
+    font-family: 'Inter', sans-serif;
+}
+.bose-msg-user {
+    background-color: var(--bose-light-bg);
+    border-radius: 2px;
+    padding: 16px 20px;
+    margin: 0 -4px;
+}
+.bose-msg-body {
+    font-size: 15px;
+    line-height: 1.7;
+    color: var(--bose-text);
+    font-family: 'Inter', sans-serif;
+}
+.bose-msg-body p { margin: 0 0 10px; }
+.bose-msg-body p:last-child { margin-bottom: 0; }
+.bose-msg-body strong { font-weight: 600; }
+.bose-msg-body em { font-style: italic; }
+
+/* ── Hide default Streamlit chat widgets (used only for input/spinner) ── */
+[data-testid="stChatMessage"] {
+    display: none !important;
+}
+
+/* ── Chat input ── */
+[data-testid="stChatInput"] {
+    border-top: 1px solid var(--bose-divider) !important;
+    padding-top: 12px !important;
+    background: var(--bose-white) !important;
+}
+[data-testid="stChatInput"] textarea {
+    background-color: var(--bose-light-bg) !important;
+    border: 1px solid var(--bose-divider) !important;
+    border-radius: 2px !important;
+    font-size: 15px !important;
+    color: var(--bose-text) !important;
+    font-family: 'Inter', sans-serif !important;
+    padding: 12px 16px !important;
+}
+[data-testid="stChatInput"] textarea:focus {
+    border-color: var(--bose-black) !important;
+    box-shadow: none !important;
+    outline: none !important;
+}
+[data-testid="stChatInput"] button {
+    background-color: var(--bose-black) !important;
+    border-radius: 2px !important;
+    border: none !important;
+}
+[data-testid="stChatInput"] button:hover {
+    background-color: var(--bose-mid-gray) !important;
+}
+
+/* ── Spinner ── */
+.stSpinner > div {
+    border-top-color: var(--bose-black) !important;
+}
+
+/* ── Form output panels ── */
+.output-panel {
+    background-color: var(--bose-light-bg);
+    border: 1px solid var(--bose-divider);
+    border-radius: 2px;
+    padding: 24px;
+    margin-top: 8px;
+}
+.output-panel h3 {
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    letter-spacing: 2px !important;
+    text-transform: uppercase !important;
+    color: var(--bose-soft-gray) !important;
+    margin-bottom: 16px !important;
+}
+
+/* ── Download buttons ── */
+[data-testid="stDownloadButton"] button {
+    background-color: var(--bose-black) !important;
+    color: var(--bose-white) !important;
+    border: none !important;
+    border-radius: 2px !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.5px !important;
+    padding: 10px 20px !important;
+    transition: background-color 0.2s !important;
+}
+[data-testid="stDownloadButton"] button:hover {
+    background-color: var(--bose-mid-gray) !important;
+}
+
+/* ── Metric cards ── */
+[data-testid="stMetric"] {
+    background-color: #1e1e24 !important;
+    border-radius: 2px !important;
+    padding: 10px 12px !important;
+}
+[data-testid="stMetric"] label {
+    font-size: 10px !important;
+    letter-spacing: 1.5px !important;
+    text-transform: uppercase !important;
+    color: var(--bose-soft-gray) !important;
+}
+[data-testid="stMetric"] [data-testid="stMetricValue"] {
+    font-size: 20px !important;
+    font-weight: 700 !important;
+    color: var(--bose-white) !important;
+}
+
+/* ── Expander ── */
+[data-testid="stSidebar"] .streamlit-expanderHeader {
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    color: var(--bose-soft-gray) !important;
+    letter-spacing: 0.3px !important;
+}
+
+/* ── Divider ── */
+hr {
+    border-color: var(--bose-divider) !important;
+    margin: 24px 0 !important;
+}
+
+/* ── Hide Streamlit branding ── */
+#MainMenu, footer, header { visibility: hidden; }
+.stDeployButton { display: none; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bose-divider); border-radius: 2px; }
+</style>
+"""
+
+
+# ---------------------------------------------------------------------------
+# Email Sender
+# ---------------------------------------------------------------------------
+def send_intake_email(form_text: str, email_summary: str, project_name: str, session_id: str):
+    """
+    Send the completed intake form to CRI via Gmail SMTP.
+    Credentials come from .env or Streamlit secrets.
+    Returns (success: bool, message: str).
+    """
+    gmail_address  = os.environ.get("GMAIL_ADDRESS", "").strip()
+    gmail_password = os.environ.get("GMAIL_APP_PASSWORD", "").strip()
+    recipient      = os.environ.get("CRI_RECIPIENT", "erich_wiernasz@bose.com").strip()
+
+    if not gmail_address or not gmail_password:
+        return False, "Email credentials not configured. Add GMAIL_ADDRESS and GMAIL_APP_PASSWORD to your .env file."
+
+    # Build the email
+    subject = f"CRI Research Intake: {project_name or 'New Request'} [{session_id}]"
+
+    # HTML body — email summary up top, full form below
+    html_body = f"""
+<html><body style="font-family: Arial, sans-serif; color: #131317; max-width: 680px; margin: 0 auto;">
+
+<div style="border-bottom: 2px solid #131317; padding-bottom: 12px; margin-bottom: 24px;">
+  <div style="font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #B4BEC7; margin-bottom: 4px;">
+    Bose · Consumer Research &amp; Insights
+  </div>
+  <div style="font-size: 22px; font-weight: 900;">Research Intake Submission</div>
+</div>
+
+<div style="background: #F1EFEE; padding: 20px; margin-bottom: 28px; border-radius: 2px;">
+  <div style="font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #7F8891; margin-bottom: 10px;">Summary</div>
+  <div style="font-size: 14px; line-height: 1.6; white-space: pre-wrap;">{email_summary}</div>
+</div>
+
+<div style="font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #7F8891; margin-bottom: 10px;">Full Intake Form</div>
+<div style="font-size: 14px; line-height: 1.7; white-space: pre-wrap; border-left: 3px solid #CFC8C5; padding-left: 16px;">{form_text}</div>
+
+<div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #CFC8C5; font-size: 11px; color: #B4BEC7;">
+  Submitted via CRI Research Intake Assistant · Session ID: {session_id}
+</div>
+</body></html>
+"""
+
+    # Plain text fallback
+    plain_body = f"CRI Research Intake: {project_name}\n\n{email_summary}\n\n---\n\n{form_text}\n\nSession ID: {session_id}"
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = f"CRI Intake Assistant <{gmail_address}>"
+    msg["To"]      = recipient
+    msg["Reply-To"] = gmail_address
+
+    msg.attach(MIMEText(plain_body, "plain"))
+    msg.attach(MIMEText(html_body, "html"))
+
+    try:
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
+            server.login(gmail_address, gmail_password)
+            server.sendmail(gmail_address, recipient, msg.as_string())
+        return True, "Intake form sent to CRI successfully."
+    except smtplib.SMTPAuthenticationError:
+        return False, "Authentication failed. Check your Gmail address and App Password in the .env file."
+    except Exception as e:
+        return False, f"Could not send: {str(e)}"
+
+
+# ---------------------------------------------------------------------------
+# Message Renderer — fully custom, no Streamlit avatars
+# ---------------------------------------------------------------------------
+def render_message(role: str, content: str):
+    """Render a chat message using our own HTML — no emoji avatars, clean Bose style."""
+    import markdown as md_lib
+    try:
+        body_html = md_lib.markdown(content, extensions=["extra"])
+    except Exception:
+        # Fallback: basic paragraph wrapping if markdown lib isn't available
+        body_html = "".join(f"<p>{line}</p>" for line in content.split("\n") if line.strip())
+
+    if role == "user":
+        st.markdown(
+            f"""<div class="bose-msg bose-msg-user">
+                <div class="bose-msg-label">You</div>
+                <div class="bose-msg-body">{body_html}</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f"""<div class="bose-msg">
+                <div class="bose-msg-label">CRI</div>
+                <div class="bose-msg-body">{body_html}</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Streamlit UI
+# ---------------------------------------------------------------------------
+def main():
+    st.set_page_config(
+        page_title="CRI Research Intake · Bose",
+        page_icon="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23131317'/><text y='.9em' font-size='80' x='10'>🎧</text></svg>",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+    # Inject Bose CSS
+    st.markdown(BOSE_CSS, unsafe_allow_html=True)
+
+    # ── Sidebar ──
+    with st.sidebar:
+        st.markdown(
+            "<div style='font-size:11px;font-weight:600;letter-spacing:2px;text-transform:uppercase;"
+            "color:#B4BEC7;margin-bottom:16px;padding-top:8px;'>BOSE · CRI</div>",
+            unsafe_allow_html=True,
+        )
+
+        api_key = st.text_input(
+            "Anthropic API Key",
+            type="password",
+            help="Required for live mode. Get one at console.anthropic.com.",
+        )
+        if api_key:
+            st.markdown(
+                "<div style='font-size:12px;color:#00A1E0;margin-top:-8px;'>● Live mode</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                "<div style='font-size:12px;color:#B4BEC7;margin-top:-8px;'>○ Demo mode</div>",
+                unsafe_allow_html=True,
+            )
+
+        st.divider()
+
+        # Coverage tracker
+        st.markdown(
+            "<div style='font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;"
+            "color:#B4BEC7;margin-bottom:12px;'>Coverage</div>",
+            unsafe_allow_html=True,
+        )
+
+        if "extracted_fields" in st.session_state:
+            cov = compute_coverage(st.session_state.extracted_fields)
+            st.progress(cov["pct"] / 100)
+            st.markdown(
+                f"<div style='font-size:12px;color:#B4BEC7;margin-top:-4px;margin-bottom:12px;'>"
+                f"{cov['covered']}/{cov['total']} fields &nbsp;·&nbsp; {cov['pct']}%</div>",
+                unsafe_allow_html=True,
+            )
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Critical", f"{cov['critical_covered']}/{cov['critical_total']}")
+            with col2:
+                st.metric("Important", f"{cov['important_covered']}/{cov['important_total']}")
+
+            with st.expander("Field detail"):
+                for section_key, section in FORM_SCHEMA.items():
+                    st.markdown(
+                        f"<div style='font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;"
+                        f"color:#7F8891;margin:10px 0 4px;'>{section['section_label']}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    for field_key, field_info in section["fields"].items():
+                        value = st.session_state.extracted_fields.get(field_key)
+                        icon = "✓" if value else {"critical": "○", "important": "○", "nice_to_have": "·"}[field_info["priority"]]
+                        color = "#00A1E0" if value else {"critical": "#F0523D", "important": "#B4BEC7", "nice_to_have": "#3E474A"}[field_info["priority"]]
+                        st.markdown(
+                            f"<div style='font-size:11px;color:{color};padding:2px 0;'>"
+                            f"{icon} {field_info['label']}</div>",
+                            unsafe_allow_html=True,
+                        )
+        else:
+            st.markdown(
+                "<div style='font-size:12px;color:#7F8891;'>Start a conversation to track coverage.</div>",
+                unsafe_allow_html=True,
+            )
+
+        st.divider()
+
+        # Sessions
+        st.markdown(
+            "<div style='font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;"
+            "color:#B4BEC7;margin-bottom:12px;'>Sessions</div>",
+            unsafe_allow_html=True,
+        )
+
+        sessions = list_sessions()
+        if sessions:
+            for s in sessions:
+                ts = s["timestamp"][:10] if len(s["timestamp"]) >= 10 else s["timestamp"]
+                label = f"{s['project_name']}  ·  {s['coverage']}%"
+                if st.button(label, key=f"load_{s['id']}"):
+                    loaded = load_session(s["id"])
+                    if loaded:
+                        st.session_state.messages = loaded["messages"]
+                        st.session_state.extracted_fields = loaded["extracted_fields"]
+                        st.session_state.session_id = loaded["session_id"]
+                        st.session_state.form_output = loaded.get("form_output")
+                        st.session_state.email_output = loaded.get("email_output")
+                        st.rerun()
+        else:
+            st.markdown(
+                "<div style='font-size:12px;color:#7F8891;'>No sessions yet.</div>",
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("<div style='margin-top:12px;'></div>", unsafe_allow_html=True)
+        if st.button("+ New Session"):
+            for key in ["messages", "extracted_fields", "session_id", "form_output", "email_output", "email_sent", "email_status"]:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.rerun()
+
+    # ── Init session state ──
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    if "extracted_fields" not in st.session_state:
+        st.session_state.extracted_fields = {key: None for key in get_all_field_keys()}
+    if "session_id" not in st.session_state:
+        st.session_state.session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    if "form_output" not in st.session_state:
+        st.session_state.form_output = None
+    if "email_output" not in st.session_state:
+        st.session_state.email_output = None
+    if "email_sent" not in st.session_state:
+        st.session_state.email_sent = False
+    if "email_status" not in st.session_state:
+        st.session_state.email_status = None
+
+    # ── Main header ──
+    st.markdown(
+        """
+        <div class="main-header">
+            <div class="brand-label">Bose · Consumer Research & Insights</div>
+            <h1>Research Intake</h1>
+            <div class="subtitle">Tell me what's going on. We'll figure out the brief together.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ── Chat messages (custom renderer — no avatars) ──
+    for msg in st.session_state.messages:
+        text = msg.get("display_content") or msg.get("content", "")
+        # Strip any extraction/output markers that may exist in older saved sessions
+        text = clean_response_for_display(text)
+        render_message(msg["role"], text)
+
+    # ── Form output ──
+    if st.session_state.form_output:
+        st.divider()
+
+        # ── Email status banner ──
+        if st.session_state.email_status:
+            success, msg = st.session_state.email_status
+            if success:
+                st.markdown(
+                    f"<div style='background:#131317;color:#fff;padding:12px 18px;border-radius:2px;"
+                    f"font-size:13px;margin-bottom:16px;'>✓ &nbsp; {msg}</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f"<div style='background:#F1EFEE;border:1px solid #CFC8C5;padding:12px 18px;"
+                    f"border-radius:2px;font-size:13px;color:#131317;margin-bottom:16px;'>"
+                    f"⚠ &nbsp; {msg}</div>",
+                    unsafe_allow_html=True,
+                )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(
+                "<div style='font-size:11px;font-weight:600;letter-spacing:2px;text-transform:uppercase;"
+                "color:#7F8891;margin-bottom:12px;'>Completed Intake Form</div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f"<div class='output-panel'>{st.session_state.form_output}</div>",
+                unsafe_allow_html=True,
+            )
+        with col2:
+            st.markdown(
+                "<div style='font-size:11px;font-weight:600;letter-spacing:2px;text-transform:uppercase;"
+                "color:#7F8891;margin-bottom:12px;'>Email Summary</div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f"<div class='output-panel'>{st.session_state.email_output or 'No email summary generated.'}</div>",
+                unsafe_allow_html=True,
+            )
+
+        st.divider()
+
+        # ── Action buttons row ──
+        proj_name = st.session_state.extracted_fields.get("project_name") or "New Request"
+        recipient  = os.environ.get("CRI_RECIPIENT", "erich_wiernasz@bose.com")
+        has_creds  = bool(os.environ.get("GMAIL_ADDRESS") and os.environ.get("GMAIL_APP_PASSWORD"))
+
+        bcol1, bcol2, bcol3 = st.columns([2, 1, 1])
+
+        with bcol1:
+            send_label = (
+                "✓ Sent to CRI" if st.session_state.email_sent
+                else "Send to CRI"
+            )
+            send_disabled = st.session_state.email_sent or not has_creds
+
+            if not has_creds:
+                st.markdown(
+                    "<div style='font-size:12px;color:#B4BEC7;padding-top:10px;'>"
+                    "Add GMAIL_ADDRESS + GMAIL_APP_PASSWORD to .env to enable sending.</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                if st.button(
+                    send_label,
+                    disabled=send_disabled,
+                    key="send_email_btn",
+                    type="primary",
+                ):
+                    with st.spinner("Sending…"):
+                        ok, status_msg = send_intake_email(
+                            st.session_state.form_output,
+                            st.session_state.email_output or "",
+                            proj_name,
+                            st.session_state.session_id,
+                        )
+                    st.session_state.email_sent   = ok
+                    st.session_state.email_status = (ok, status_msg)
+                    st.rerun()
+
+        with bcol2:
+            st.download_button(
+                "Download Form",
+                st.session_state.form_output,
+                file_name=f"CRI_Intake_{st.session_state.session_id}.md",
+                mime="text/markdown",
+            )
+        with bcol3:
+            if st.session_state.email_output:
+                st.download_button(
+                    "Download Summary",
+                    st.session_state.email_output,
+                    file_name=f"CRI_Email_{st.session_state.session_id}.md",
+                    mime="text/markdown",
+                )
+
+    # ── Chat input ──
+    if prompt := st.chat_input("What's going on with your project?"):
+        st.session_state.messages.append(
+            {"role": "user", "content": prompt, "display_content": prompt}
+        )
+        render_message("user", prompt)
+
+        system_prompt = build_system_prompt(
+            st.session_state.extracted_fields,
+            compute_coverage(st.session_state.extracted_fields),
+        )
+
+        api_messages = [
+            {"role": m["role"], "content": m["content"]}
+            for m in st.session_state.messages
+        ]
+
+        with st.spinner(""):
+            response = call_llm(api_messages, system_prompt, api_key or None)
+
+        st.session_state.extracted_fields = extract_fields_from_response(
+            response, st.session_state.extracted_fields
+        )
+
+        form_out, email_out = extract_form_output(response)
+        if form_out:
+            st.session_state.form_output = form_out
+        if email_out:
+            st.session_state.email_output = email_out
+
+        display_text = clean_response_for_display(response)
+        render_message("assistant", display_text)
+
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": response,
+            "display_content": display_text,
+        })
+
+        save_session(
+            st.session_state.session_id,
+            [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages],
+            st.session_state.extracted_fields,
+            st.session_state.form_output,
+            st.session_state.email_output,
+        )
+
+        st.rerun()
+
+
+if __name__ == "__main__":
+    main()
