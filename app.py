@@ -921,11 +921,16 @@ def main():
             unsafe_allow_html=True,
         )
 
-        api_key = st.text_input(
+        # Use key from secrets/env if available — sidebar input is optional override
+        _env_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        api_key_input = st.text_input(
             "Anthropic API Key",
             type="password",
-            help="Required for live mode. Get one at console.anthropic.com.",
+            help="Pre-configured. You can override here if needed.",
+            placeholder="Using saved key" if _env_key else "sk-ant-...",
         )
+        api_key = api_key_input or _env_key
+
         if api_key:
             st.markdown(
                 "<div style='font-size:12px;color:#00A1E0;margin-top:-8px;'>● Live mode</div>",
