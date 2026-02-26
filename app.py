@@ -230,8 +230,10 @@ def build_system_prompt(extracted_fields: dict, coverage: dict):
 ## WHO YOU ARE
 You are the researcher every stakeholder wishes they had: sharp, genuinely curious, warm, a real thought partner. You've run a thousand projects and you know the difference between a brief that produces great work and one that wastes everyone's time. You are NOT administering a form. You are having a conversation with a colleague.
 
-## TONE
+## TONE IN CONVERSATION
 Collegial and direct. Think: the smartest person in the room who doesn't need to prove it. Confident without being clinical. Dry wit when it fits. No filler affirmations ("Great point," "Absolutely"). No greetings or pleasantries. Just engage — pick up what they said and move it forward.
+
+**CRITICAL RULE: In the conversation with the stakeholder, you are a neutral, curious probe — NOT an advisor injecting your own opinions or steering them toward a particular answer. Your job is to draw out THEIR thinking with the most incisive questions possible. Light personality is welcome. Opinions about their business decisions are not.**
 
 **CRITICAL: You are having a free-form conversation, NOT collecting form fields. There is no checklist. There is no form. Your job is to deeply understand what this person needs through genuine dialogue — the way a seasoned researcher would over coffee. Ask the ONE most valuable question available at any moment. Follow threads that matter. Let the conversation breathe.**
 
@@ -245,7 +247,7 @@ Your job is to deeply understand what this person actually needs. Not to fill bo
 - **Reflect back what you're hearing** to help them clarify their own thinking. A great intake conversation leaves the stakeholder understanding their own project better than when they walked in.
 - **Push on assumptions** without telegraphing pushback. Just ask the question that surfaces the gap.
 - **Never say:** "let me push on this," "I want to make sure I understand," "can you clarify," "that's vague," or any meta-commentary. Just engage directly.
-- **Bring your expertise.** Flag common pitfalls. Offer useful frames. Challenge circular reasoning by reframing, not by labeling it circular.
+- **No opinion injection toward the stakeholder.** You can be warm, a little funny, totally engaged — but you don't editorialize about their strategy. Save that for the Researcher Notes.
 
 ## WHAT YOU NEED TO UNDERSTAND (your internal compass, not a script)
 Through natural conversation, come to understand:
@@ -268,41 +270,49 @@ Through natural conversation, come to understand:
 {conversation_summary if conversation_summary else "(Conversation just started — nothing captured yet.)"}
 
 ## GENERATING THE OUTPUT
-When the stakeholder confirms they're ready to wrap up, generate a research brief using EXACTLY this format:
+When the stakeholder confirms they're ready to wrap up, generate a research brief using EXACTLY this format. The brief is written FOR the CRI researcher team — NOT for the stakeholder. Write it like you just got off a call and are briefing your team in Slack, except it's a formal doc. You have a voice here. Use it.
 
 ===BRIEF_OUTPUT_START===
-[Write a professional research brief as if written BY a senior CRI researcher FOR the CRI team. This is NOT a filled-out form — it is a synthesized, narrative brief. It should read like a smart colleague summarizing the request after a real conversation.
-
-Structure it as:
-
 **Project:** [name and requestor]
 **Deadline:** [timing]
 **Sponsor:** [if known]
 
 **The Situation**
-[2-3 sentences: what's going on in the business, why this research is needed now]
+[2-3 sentences: what's going on in the business, why this research is needed now. Be specific — not "they want to grow" but what's actually happening and why it matters now.]
 
 **The Core Question**
-[The actual research question in plain language — what do we need to understand?]
+[The actual research question in plain language — not corporate-speak. What do we genuinely need to understand to make progress?]
 
 **What They'll Do With It**
-[What decision or action this research will feed — be specific]
+[What decision or action this research will feed. Be concrete: what gets built, killed, funded, changed, or presented to whom.]
 
 **Their Current Hypothesis**
-[What they believe going in, what data backs it, how confident they are]
+[What they believe going in, what data or gut feeling backs it, how open they seem to being wrong. Be honest about the confidence level.]
 
 **Who We're Studying**
-[Target consumers, geography, any key sub-groups]
+[Target consumers, geography, any key sub-groups that matter for the analysis.]
 
 **What We Already Know**
-[Existing data, past research, what this uniquely adds]
+[Existing data, past research, context that's in the room — and what unique gap this project fills that we don't already have.]
 
 **The Stakes**
-[Business impact, risk of not doing it, metrics it touches]
+[Business impact, risk of not doing it, what metrics or decisions this touches. Give a real read on how important this actually is.]
+
+**Recommended Methodology**
+[Your professional recommendation on approach. Be direct: qual, quant, or mixed — and why this project calls for that. Consider: Is this an exploration (qual makes sense), a validation (survey/quant), a decision with real money on it (mixed for confidence), or a tracking need (quant longitudinal)? Give a brief rationale — 2-3 sentences. If there's a strong reason to push back on what they asked for, say so here.]
 
 **Researcher Notes**
-[Any flags, open questions, assumptions to pressure-test, or things to clarify in scoping. This is your professional editorial — use it.]
-]
+[This is your insider briefing to the team. Write it like you're debriefing a colleague after getting off the call — professional but casual, first-person voice, allowed to have a take.
+
+Cover:
+- What's the real subtext here? What's the actual pressure or political situation driving this ask?
+- What's the stakeholder NOT saying that the team should know going into scoping?
+- Where is their thinking solid vs. where are there gaps or assumptions that need pressure-testing?
+- Any red flags: scope creep risk, hypothesis that's really a conclusion, timeline that doesn't match the ambition, stakeholder who seems to want validation not insight?
+- What's the one thing we absolutely must nail in scoping to make this project successful?
+- What follow-up questions should the researcher ask in the scoping call?
+
+Don't be timid here. If the ask is fuzzy, say so. If their hypothesis feels baked-in, flag it. If the timeline is unrealistic for what they're describing, note it. This is the brief the researcher reads before picking up the phone — make it useful.]
 ===BRIEF_OUTPUT_END===
 
 ===EMAIL_SUMMARY_START===
@@ -944,34 +954,7 @@ def main():
 
         st.divider()
 
-        # Sessions
-        st.markdown(
-            "<div style='font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;"
-            "color:#B4BEC7;margin-bottom:12px;'>Sessions</div>",
-            unsafe_allow_html=True,
-        )
-
-        sessions = list_sessions()
-        if sessions:
-            for s in sessions:
-                ts = s["timestamp"][:10] if len(s["timestamp"]) >= 10 else s["timestamp"]
-                label = f"{s['project_name']}  ·  {s['coverage']}%"
-                if st.button(label, key=f"load_{s['id']}"):
-                    loaded = load_session(s["id"])
-                    if loaded:
-                        st.session_state.messages = loaded["messages"]
-                        st.session_state.extracted_fields = loaded["extracted_fields"]
-                        st.session_state.session_id = loaded["session_id"]
-                        st.session_state.form_output = loaded.get("form_output")
-                        st.session_state.email_output = loaded.get("email_output")
-                        st.rerun()
-        else:
-            st.markdown(
-                "<div style='font-size:12px;color:#7F8891;'>No sessions yet.</div>",
-                unsafe_allow_html=True,
-            )
-
-        st.markdown("<div style='margin-top:12px;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='margin-top:4px;'></div>", unsafe_allow_html=True)
         if st.button("+ New Session"):
             for key in ["messages", "extracted_fields", "session_id", "form_output", "email_output", "email_sent", "email_status"]:
                 if key in st.session_state:
@@ -1013,89 +996,39 @@ def main():
         text = clean_response_for_display(text)
         render_message(msg["role"], text)
 
-    # ── Form output ──
+    # ── Form output (brief generated) ──
     if st.session_state.form_output:
-        st.divider()
-
-        # ── Email status banner ──
-        if st.session_state.email_status:
-            success, msg = st.session_state.email_status
-            if success:
-                st.markdown(
-                    f"<div style='background:#131317;color:#fff;padding:12px 18px;border-radius:2px;"
-                    f"font-size:13px;margin-bottom:16px;'>✓ &nbsp; {msg}</div>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(
-                    f"<div style='background:#F1EFEE;border:1px solid #CFC8C5;padding:12px 18px;"
-                    f"border-radius:2px;font-size:13px;color:#131317;margin-bottom:16px;'>"
-                    f"⚠ &nbsp; {msg}</div>",
-                    unsafe_allow_html=True,
-                )
-
-        st.markdown(
-            "<div style='font-size:11px;font-weight:600;letter-spacing:2px;text-transform:uppercase;"
-            "color:#7F8891;margin-bottom:12px;'>Research Brief</div>",
-            unsafe_allow_html=True,
-        )
-        import markdown as md_lib
-        try:
-            brief_html = md_lib.markdown(st.session_state.form_output, extensions=["extra"])
-        except Exception:
-            brief_html = st.session_state.form_output
-        st.markdown(
-            f"<div class='output-panel'>{brief_html}</div>",
-            unsafe_allow_html=True,
-        )
-
-        st.divider()
-
-        # ── Action buttons row ──
-        proj_name = st.session_state.extracted_fields.get("project_name") or "New Request"
-        recipient  = os.environ.get("CRI_RECIPIENT", "erich_wiernasz@bose.com")
-        has_creds  = bool(os.environ.get("GMAIL_ADDRESS") and os.environ.get("GMAIL_APP_PASSWORD"))
-
-        bcol1, bcol2, bcol3 = st.columns([2, 1, 1])
-
-        with bcol1:
-            send_label = (
-                "✓ Sent to CRI" if st.session_state.email_sent
-                else "Send to CRI"
-            )
-            send_disabled = st.session_state.email_sent or not has_creds
-
-            if not has_creds:
-                st.markdown(
-                    "<div style='font-size:12px;color:#B4BEC7;padding-top:10px;'>"
-                    "Add GMAIL_ADDRESS + GMAIL_APP_PASSWORD to .env to enable sending.</div>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                if st.button(
-                    send_label,
-                    disabled=send_disabled,
-                    key="send_email_btn",
-                    type="primary",
-                ):
-                    with st.spinner("Sending…"):
-                        ok, status_msg = send_intake_email(
-                            st.session_state.form_output,
-                            st.session_state.email_output or "",
-                            proj_name,
-                            st.session_state.session_id,
-                        )
-                    st.session_state.email_sent   = ok
-                    st.session_state.email_status = (ok, status_msg)
-                    st.rerun()
-
-        with bcol2:
-            st.download_button(
-                "Download Brief",
+        # Auto-send email on brief generation (first time only)
+        has_creds = bool(os.environ.get("GMAIL_ADDRESS") and os.environ.get("GMAIL_APP_PASSWORD"))
+        if has_creds and not st.session_state.email_sent:
+            proj_name = st.session_state.extracted_fields.get("project_name") or "New Request"
+            ok, status_msg = send_intake_email(
                 st.session_state.form_output,
-                file_name=f"CRI_Brief_{st.session_state.session_id}.md",
-                mime="text/markdown",
+                st.session_state.email_output or "",
+                proj_name,
+                st.session_state.session_id,
             )
+            st.session_state.email_sent   = ok
+            st.session_state.email_status = (ok, status_msg)
+
+        # ── Warm closing card shown to stakeholder ──
+        st.divider()
+        st.markdown(
+            """
+            <div style='background:#F8F1E7;border:1px solid #CFC8C5;border-radius:4px;
+                        padding:28px 32px;max-width:560px;margin:0 auto 24px auto;text-align:center;'>
+                <div style='font-size:22px;margin-bottom:12px;'>✓</div>
+                <div style='font-size:18px;font-weight:700;letter-spacing:-0.3px;
+                            color:#131317;margin-bottom:10px;'>You're all set</div>
+                <div style='font-size:14px;line-height:1.7;color:#3E474A;'>
+                    Thanks for walking me through this. The CRI team will be in touch soon
+                    to scope the project and get things moving.<br><br>
+                    If anything comes up in the meantime, reach out directly.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     # ── Chat input ──
     if prompt := st.chat_input("What's going on with your project?"):
