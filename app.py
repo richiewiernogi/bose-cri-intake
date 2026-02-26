@@ -269,6 +269,15 @@ Through natural conversation, come to understand:
 ## WHAT YOU'VE LEARNED SO FAR
 {conversation_summary if conversation_summary else "(Conversation just started — nothing captured yet.)"}
 
+## LOGISTICS ALREADY CAPTURED (do NOT ask about these — they were collected upfront)
+The following were provided before the conversation started. Treat them as known. Reference them naturally if relevant, but never ask for them again:
+- Requestor / name: {extracted_fields.get("requestor") or "not provided"}
+- Project name: {extracted_fields.get("project_name") or "not provided"}
+- Sponsor: {extracted_fields.get("sponsor") or "not provided"}
+- Stakeholders for scoping: {extracted_fields.get("stakeholders_scope") or "not provided"}
+- Stakeholders for report-out: {extracted_fields.get("stakeholders_report") or "not provided"}
+- Timing: {extracted_fields.get("timing") or "not provided"}
+
 ## GENERATING THE OUTPUT
 When the stakeholder confirms they're ready to wrap up, generate a research brief using EXACTLY this format. The brief is written FOR the CRI researcher team — NOT for the stakeholder. Write it like you just got off a call and are briefing your team in Slack, except it's a formal doc. You have a voice here. Use it.
 
@@ -795,6 +804,65 @@ hr {
     margin: 24px 0 !important;
 }
 
+/* ── Pre-chat intake form ── */
+[data-testid="stForm"] {
+    background-color: var(--bose-light-bg) !important;
+    border: 1px solid var(--bose-divider) !important;
+    border-radius: 4px !important;
+    padding: 28px 28px 20px !important;
+    max-width: 700px !important;
+    margin: 0 auto !important;
+}
+[data-testid="stForm"] label {
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.5px !important;
+    color: var(--bose-mid-gray) !important;
+    text-transform: uppercase !important;
+}
+[data-testid="stForm"] input[type="text"] {
+    border: 1px solid var(--bose-divider) !important;
+    border-radius: 2px !important;
+    font-size: 14px !important;
+    background-color: var(--bose-white) !important;
+}
+[data-testid="stForm"] input[type="text"]:focus {
+    border-color: var(--bose-black) !important;
+    box-shadow: none !important;
+}
+[data-testid="stForm"] [data-testid="stFormSubmitButton"] button {
+    background-color: var(--bose-black) !important;
+    color: var(--bose-white) !important;
+    border: none !important;
+    border-radius: 2px !important;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.5px !important;
+    padding: 12px 24px !important;
+    margin-top: 8px !important;
+    width: 100% !important;
+    transition: background-color 0.2s !important;
+}
+[data-testid="stForm"] [data-testid="stFormSubmitButton"] button:hover {
+    background-color: var(--bose-mid-gray) !important;
+}
+
+/* ── Radio buttons in form ── */
+[data-testid="stForm"] [data-testid="stRadio"] label {
+    font-size: 13px !important;
+    font-weight: 400 !important;
+    letter-spacing: 0 !important;
+    text-transform: none !important;
+    color: var(--bose-text) !important;
+}
+[data-testid="stForm"] [data-testid="stRadio"] > label {
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.5px !important;
+    text-transform: uppercase !important;
+    color: var(--bose-mid-gray) !important;
+}
+
 /* ── Hide Streamlit branding ── */
 #MainMenu, footer, header { visibility: hidden; }
 .stDeployButton { display: none; }
@@ -956,7 +1024,7 @@ def main():
 
         st.markdown("<div style='margin-top:4px;'></div>", unsafe_allow_html=True)
         if st.button("+ New Session"):
-            for key in ["messages", "extracted_fields", "session_id", "form_output", "email_output", "email_sent", "email_status"]:
+            for key in ["messages", "extracted_fields", "session_id", "form_output", "email_output", "email_sent", "email_status", "intake_submitted"]:
                 if key in st.session_state:
                     del st.session_state[key]
             st.rerun()
@@ -976,6 +1044,8 @@ def main():
         st.session_state.email_sent = False
     if "email_status" not in st.session_state:
         st.session_state.email_status = None
+    if "intake_submitted" not in st.session_state:
+        st.session_state.intake_submitted = False
 
     # ── Main header ──
     st.markdown(
@@ -988,6 +1058,89 @@ def main():
         """,
         unsafe_allow_html=True,
     )
+
+    # ── Pre-chat intake form ──
+    if not st.session_state.intake_submitted:
+        st.markdown(
+            """
+            <div style='max-width:600px;margin:0 auto 8px auto;'>
+                <div style='font-size:13px;color:#3E474A;line-height:1.6;margin-bottom:28px;'>
+                    Before we dig in, a few quick details so CRI has the basics on record.
+                    The conversation will handle everything else.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        with st.form("intake_pre_form"):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                fi_name = st.text_input(
+                    "Your Name *",
+                    placeholder="e.g. Jamie Chen",
+                )
+                fi_project = st.text_input(
+                    "Project Name",
+                    placeholder="e.g. Q3 Headphone Positioning",
+                    help="A working title is fine — we can refine it.",
+                )
+                fi_sponsor = st.text_input(
+                    "Executive Sponsor",
+                    placeholder="e.g. Sarah Lee, VP Marketing",
+                    help="Who's backing this work at the leadership level?",
+                )
+            with col_b:
+                fi_stakeholders_scope = st.text_input(
+                    "Stakeholders for Scoping",
+                    placeholder="e.g. Product, Marketing, Sales",
+                    help="Who should weigh in on what we research and how?",
+                )
+                fi_stakeholders_report = st.text_input(
+                    "Stakeholders for Report-Out",
+                    placeholder="e.g. CMO, Brand team",
+                    help="Who needs to see the results?",
+                )
+
+                # Timing: quick radio + optional freetext
+                timing_choice = st.radio(
+                    "When do you need this?",
+                    options=["Within 4 weeks", "1–2 months", "2–3 months", "3+ months", "Flexible / TBD"],
+                    horizontal=False,
+                )
+                fi_timing_other = st.text_input(
+                    "Hard deadline or context (optional)",
+                    placeholder="e.g. Must inform Q4 planning by Oct 1",
+                )
+
+            submitted = st.form_submit_button("Start the conversation →", type="primary", use_container_width=True)
+
+        if submitted:
+            if not fi_name.strip():
+                st.error("Please enter your name so we know who we're talking to.")
+            else:
+                timing_val = timing_choice
+                if fi_timing_other.strip():
+                    timing_val = f"{timing_choice} — {fi_timing_other.strip()}"
+
+                # Seed extracted fields with the pre-form data
+                ef = st.session_state.extracted_fields
+                ef["requestor"] = fi_name.strip()
+                if fi_project.strip():
+                    ef["project_name"] = fi_project.strip()
+                if fi_sponsor.strip():
+                    ef["sponsor"] = fi_sponsor.strip()
+                if fi_stakeholders_scope.strip():
+                    ef["stakeholders_scope"] = fi_stakeholders_scope.strip()
+                if fi_stakeholders_report.strip():
+                    ef["stakeholders_report"] = fi_stakeholders_report.strip()
+                ef["timing"] = timing_val
+
+                st.session_state.extracted_fields = ef
+                st.session_state.intake_submitted = True
+                st.rerun()
+
+        st.stop()
 
     # ── Chat messages (custom renderer — no avatars) ──
     for msg in st.session_state.messages:
