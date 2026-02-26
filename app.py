@@ -6,6 +6,8 @@ import smtplib
 import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 from pathlib import Path
 
 # Load .env for local development
@@ -384,6 +386,152 @@ After EVERY response (including conversational ones), silently append this JSON 
 ===EXTRACTED_END===
 """
     return system_prompt
+
+
+# ---------------------------------------------------------------------------
+# Completed Form Generator
+# ---------------------------------------------------------------------------
+def generate_completed_form(messages: list, extracted_fields: dict, api_key: str | None) -> str:
+    """
+    Makes a focused LLM call to fill every field from the original FORM_SCHEMA
+    based on what was learned in the intake conversation and pre-form inputs.
+    Returns an HTML string of the completed form.
+    """
+    # Build a condensed transcript for the form-fill prompt
+    transcript_lines = []
+    for m in messages:
+        if m["role"] not in ("user", "assistant"):
+            continue
+        display = m.get("display_content") or m.get("content", "")
+        # Strip internal markers
+        for pair in [("===EXTRACTED_START===","===EXTRACTED_END==="),
+                     ("===BRIEF_OUTPUT_START===","===BRIEF_OUTPUT_END==="),
+                     ("===EMAIL_SUMMARY_START===","===EMAIL_SUMMARY_END===")]:
+            while pair[0] in display and pair[1] in display:
+                s = display.index(pair[0]); e = display.index(pair[1]) + len(pair[1])
+                display = display[:s] + display[e:]
+        display = display.strip()
+        if display:
+            speaker = "STAKEHOLDER" if m["role"] == "user" else "CRI"
+            transcript_lines.append(f"{speaker}: {display}")
+    transcript = "\n\n".join(transcript_lines)
+
+    # Pre-form data already captured
+    preform_data = {k: extracted_fields.get(k) for k in [
+        "requestor", "project_name", "sponsor", "stakeholders_scope",
+        "stakeholders_report", "timing", "size_of_business_impact",
+        "confidence_level", "type_of_decision", "overall_risk_of_doing_nothing"
+    ]}
+
+    # Build field list for the prompt
+    field_descriptions = []
+    for section in FORM_SCHEMA.values():
+        for fkey, finfo in section["fields"].items():
+            field_descriptions.append(f'  "{fkey}": // {finfo["label"]} — {finfo["description"]}')
+    fields_block = "\n".join(field_descriptions)
+
+    form_fill_prompt = f"""You are filling out a structured research intake form on behalf of Bose CRI based on a completed intake conversation.
+
+Below is the conversation transcript and the structured data already collected upfront.
+
+## Pre-form data already collected:
+{json.dumps({k: v for k, v in preform_data.items() if v}, indent=2)}
+
+## Intake conversation transcript:
+{transcript}
+
+## Your task:
+Fill every field below as completely as possible from the conversation. Write in the voice of the stakeholder (first person where appropriate). Be specific and faithful to what they said — don't invent or embellish. If a field was genuinely not addressed, write "Not provided." Don't leave anything blank.
+
+Output ONLY a valid JSON object with exactly these keys:
+
+{{
+{fields_block}
+}}
+
+Return only the JSON. No commentary, no markdown fences."""
+
+    if api_key:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            resp = client.messages.create(
+                model="claude-opus-4-5",
+                max_tokens=2048,
+                messages=[{"role": "user", "content": form_fill_prompt}],
+            )
+            raw = resp.content[0].text.strip()
+            # Strip markdown fences if present
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+                raw = raw.rsplit("```", 1)[0].strip()
+            field_values = json.loads(raw)
+        except Exception:
+            # Fall back to best-effort from extracted_fields
+            field_values = {}
+    else:
+        field_values = {}
+
+    # Merge with extracted_fields as fallback for any missing keys
+    for fkey in get_all_field_keys():
+        if not field_values.get(fkey):
+            ev = extracted_fields.get(fkey)
+            if ev:
+                field_values[fkey] = ev
+
+    # Render as clean HTML document
+    html_parts = ["""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: Arial, sans-serif; color: #131317; max-width: 720px; margin: 40px auto; padding: 0 24px; }
+  .doc-header { border-bottom: 2px solid #131317; padding-bottom: 14px; margin-bottom: 32px; }
+  .doc-header .label { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #B4BEC7; margin-bottom: 4px; }
+  .doc-header h1 { font-size: 24px; font-weight: 900; margin: 0; }
+  .section { margin-bottom: 32px; }
+  .section-title { font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
+                   color: #B4BEC7; border-bottom: 1px solid #E8E3DE; padding-bottom: 8px; margin-bottom: 20px; }
+  .field { margin-bottom: 18px; }
+  .field-label { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;
+                 color: #3E474A; margin-bottom: 4px; }
+  .field-priority-critical { border-left: 3px solid #131317; padding-left: 10px; }
+  .field-priority-important { border-left: 3px solid #B4BEC7; padding-left: 10px; }
+  .field-priority-nice_to_have { border-left: 3px solid #E8E3DE; padding-left: 10px; }
+  .field-value { font-size: 14px; line-height: 1.7; color: #131317; }
+  .field-value.empty { color: #B4BEC7; font-style: italic; }
+  .footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid #E8E3DE;
+            font-size: 11px; color: #B4BEC7; }
+</style>
+</head>
+<body>
+<div class="doc-header">
+  <div class="label">Bose · Consumer Research &amp; Insights</div>
+  <h1>Research Intake Form</h1>
+</div>
+"""]
+
+    for section_key, section in FORM_SCHEMA.items():
+        html_parts.append(f'<div class="section">')
+        html_parts.append(f'<div class="section-title">{section["section_label"]}</div>')
+        for fkey, finfo in section["fields"].items():
+            value = field_values.get(fkey, "")
+            priority = finfo.get("priority", "nice_to_have")
+            is_empty = not value or value.strip().lower() in ("not provided", "null", "none", "")
+            value_class = "field-value empty" if is_empty else "field-value"
+            display_value = value if (value and not is_empty) else "Not provided"
+            html_parts.append(
+                f'<div class="field field-priority-{priority}">'
+                f'<div class="field-label">{finfo["label"]}</div>'
+                f'<div class="{value_class}">{display_value}</div>'
+                f'</div>'
+            )
+        html_parts.append('</div>')
+
+    html_parts.append('<div class="footer">Generated via CRI Research Intake · Bose Consumer Research &amp; Insights</div>')
+    html_parts.append("</body></html>")
+
+    return "\n".join(html_parts)
 
 
 # ---------------------------------------------------------------------------
@@ -989,10 +1137,11 @@ hr {
 # ---------------------------------------------------------------------------
 # Email Sender
 # ---------------------------------------------------------------------------
-def send_intake_email(form_text: str, email_summary: str, project_name: str, session_id: str):
+def send_intake_email(form_text: str, email_summary: str, project_name: str, session_id: str,
+                      completed_form_html: str | None = None):
     """
-    Send the completed intake form to CRI via Gmail SMTP.
-    Credentials come from .env or Streamlit secrets.
+    Send the research brief to CRI via Gmail SMTP, with the completed original
+    intake form attached as an HTML file.
     Returns (success: bool, message: str).
     """
     gmail_address  = os.environ.get("GMAIL_ADDRESS", "").strip()
@@ -1002,10 +1151,9 @@ def send_intake_email(form_text: str, email_summary: str, project_name: str, ses
     if not gmail_address or not gmail_password:
         return False, "Email credentials not configured. Add GMAIL_ADDRESS and GMAIL_APP_PASSWORD to your .env file."
 
-    # Build the email
     subject = f"Research Request: {project_name or 'New Request'} [{session_id}]"
 
-    # Convert markdown brief to HTML for email
+    # Convert markdown brief to HTML for email body
     try:
         import markdown as md_lib
         brief_html_content = md_lib.markdown(form_text, extensions=["extra"])
@@ -1024,6 +1172,8 @@ def send_intake_email(form_text: str, email_summary: str, project_name: str, ses
 
 {f'<div style="background: #F1EFEE; padding: 16px 20px; margin-bottom: 28px; border-radius: 2px; font-size: 14px; line-height: 1.6; color: #3E474A;">{email_summary}</div>' if email_summary else ''}
 
+{'<div style="background: #F8F1E7; border: 1px solid #CFC8C5; padding: 12px 16px; margin-bottom: 24px; border-radius: 2px; font-size: 13px; color: #3E474A;">📎 <strong>Completed intake form attached</strong> — see <em>CRI_IntakeForm_{session_id}.html</em></div>' if completed_form_html else ''}
+
 <div style="font-size: 14px; line-height: 1.8;">
 {brief_html_content}
 </div>
@@ -1034,24 +1184,37 @@ def send_intake_email(form_text: str, email_summary: str, project_name: str, ses
 </body></html>
 """
 
-    # Plain text fallback
     plain_body = f"CRI Research Request: {project_name}\n\n{email_summary}\n\n---\n\n{form_text}\n\nSession ID: {session_id}"
 
-    msg = MIMEMultipart("alternative")
+    # ── Outer container: mixed (supports both body alternatives + attachments) ──
+    msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
     msg["From"]    = f"CRI Intake Assistant <{gmail_address}>"
     msg["To"]      = recipient
     msg["Reply-To"] = gmail_address
 
-    msg.attach(MIMEText(plain_body, "plain"))
-    msg.attach(MIMEText(html_body, "html"))
+    # ── Inner alternative part for plain/html body ──
+    body_part = MIMEMultipart("alternative")
+    body_part.attach(MIMEText(plain_body, "plain"))
+    body_part.attach(MIMEText(html_body, "html"))
+    msg.attach(body_part)
+
+    # ── Attach completed intake form as HTML file ──
+    if completed_form_html:
+        attachment = MIMEBase("text", "html")
+        attachment.set_payload(completed_form_html.encode("utf-8"))
+        encoders.encode_base64(attachment)
+        filename = f"CRI_IntakeForm_{session_id}.html"
+        attachment.add_header("Content-Disposition", "attachment", filename=filename)
+        attachment.add_header("Content-Type", "text/html; charset=utf-8")
+        msg.attach(attachment)
 
     try:
         context = ssl.create_default_context()
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
             server.login(gmail_address, gmail_password)
             server.sendmail(gmail_address, recipient, msg.as_string())
-        return True, "Intake form sent to CRI successfully."
+        return True, "Brief and intake form sent to CRI successfully."
     except smtplib.SMTPAuthenticationError:
         return False, "Authentication failed. Check your Gmail address and App Password in the .env file."
     except Exception as e:
@@ -1135,7 +1298,7 @@ def main():
 
         st.markdown("<div style='margin-top:4px;'></div>", unsafe_allow_html=True)
         if st.button("+ New Session"):
-            for key in ["messages", "extracted_fields", "session_id", "form_output", "email_output", "email_sent", "email_status", "intake_submitted"]:
+            for key in ["messages", "extracted_fields", "session_id", "form_output", "email_output", "email_sent", "email_status", "intake_submitted", "completed_form"]:
                 if key in st.session_state:
                     del st.session_state[key]
             st.rerun()
@@ -1157,6 +1320,8 @@ def main():
         st.session_state.email_status = None
     if "intake_submitted" not in st.session_state:
         st.session_state.intake_submitted = False
+    if "completed_form" not in st.session_state:
+        st.session_state.completed_form = None
 
     # ── Main header ──
     st.markdown(
@@ -1345,6 +1510,7 @@ def main():
                 st.session_state.email_output or "",
                 proj_name,
                 st.session_state.session_id,
+                completed_form_html=st.session_state.completed_form,
             )
             st.session_state.email_sent   = ok
             st.session_state.email_status = (ok, status_msg)
@@ -1402,6 +1568,15 @@ def main():
             }]
             transcript = build_transcript_appendix(all_msgs, st.session_state.extracted_fields)
             st.session_state.form_output = form_out + transcript
+
+            # Generate the completed original intake form (as HTML, for email attachment)
+            if st.session_state.completed_form is None:
+                with st.spinner("Generating completed intake form…"):
+                    st.session_state.completed_form = generate_completed_form(
+                        all_msgs,
+                        st.session_state.extracted_fields,
+                        api_key or None,
+                    )
         if email_out:
             st.session_state.email_output = email_out
 
