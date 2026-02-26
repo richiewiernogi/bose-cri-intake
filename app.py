@@ -269,14 +269,18 @@ Through natural conversation, come to understand:
 ## WHAT YOU'VE LEARNED SO FAR
 {conversation_summary if conversation_summary else "(Conversation just started — nothing captured yet.)"}
 
-## LOGISTICS ALREADY CAPTURED (do NOT ask about these — they were collected upfront)
-The following were provided before the conversation started. Treat them as known. Reference them naturally if relevant, but never ask for them again:
+## ALREADY CAPTURED UPFRONT (do NOT ask about any of these)
+The following were provided before the conversation started. Treat them as known. Reference naturally if relevant, never ask again:
 - Requestor / name: {extracted_fields.get("requestor") or "not provided"}
 - Project name: {extracted_fields.get("project_name") or "not provided"}
 - Sponsor: {extracted_fields.get("sponsor") or "not provided"}
 - Stakeholders for scoping: {extracted_fields.get("stakeholders_scope") or "not provided"}
 - Stakeholders for report-out: {extracted_fields.get("stakeholders_report") or "not provided"}
 - Timing: {extracted_fields.get("timing") or "not provided"}
+- Self-assessed business impact: {extracted_fields.get("size_of_business_impact") or "not provided"}
+- Self-assessed existing knowledge: {extracted_fields.get("confidence_level") or "not provided"}
+- Decision reversibility: {extracted_fields.get("type_of_decision") or "not provided"}
+- Self-assessed risk of not doing: {extracted_fields.get("overall_risk_of_doing_nothing") or "not provided"}
 
 ## GENERATING THE OUTPUT
 When the stakeholder confirms they're ready to wrap up, generate a research brief using EXACTLY this format. The brief is written FOR the CRI researcher team — NOT for the stakeholder. Write it like you just got off a call and are briefing your team in Slack, except it's a formal doc. You have a voice here. Use it.
@@ -305,7 +309,15 @@ When the stakeholder confirms they're ready to wrap up, generate a research brie
 [Existing data, past research, context that's in the room — and what unique gap this project fills that we don't already have.]
 
 **The Stakes**
-[Business impact, risk of not doing it, what metrics or decisions this touches. Give a real read on how important this actually is.]
+[Business impact, risk of not doing it, what metrics or decisions this touches. Give a real read on how important this actually is.
+
+Also incorporate the stakeholder's own self-assessment from the intake form:
+- They rated business impact as: {extracted_fields.get("size_of_business_impact") or "not provided"}
+- Their existing knowledge level: {extracted_fields.get("confidence_level") or "not provided"}
+- Decision reversibility: {extracted_fields.get("type_of_decision") or "not provided"}
+- Risk of not doing it: {extracted_fields.get("overall_risk_of_doing_nothing") or "not provided"}
+
+Weave these in naturally — don't just list them. If any feel inconsistent with what came out in conversation, flag that in Researcher Notes.]
 
 **Recommended Methodology**
 [Your professional recommendation on approach. Be direct: qual, quant, or mixed — and why this project calls for that. Consider: Is this an exploration (qual makes sense), a validation (survey/quant), a decision with real money on it (mixed for confidence), or a tracking need (quant longitudinal)? Give a brief rationale — 2-3 sentences. If there's a strong reason to push back on what they asked for, say so here.]
@@ -466,6 +478,46 @@ def extract_form_output(response_text):
     except ValueError:
         pass
     return form_output, email_output
+
+
+def build_transcript_appendix(messages, extracted_fields):
+    """Build a raw transcript block to append to the research brief for CRI researchers."""
+    lines = []
+    lines.append("\n\n---\n\n## Appendix: Raw Conversation Transcript\n")
+    lines.append("*For CRI researcher reference — unedited stakeholder inputs from the intake conversation.*\n")
+
+    # Pre-form structured inputs
+    pre_form_fields = [
+        ("Requestor", extracted_fields.get("requestor")),
+        ("Project Name", extracted_fields.get("project_name")),
+        ("Sponsor", extracted_fields.get("sponsor")),
+        ("Stakeholders for Scoping", extracted_fields.get("stakeholders_scope")),
+        ("Stakeholders for Report-Out", extracted_fields.get("stakeholders_report")),
+        ("Timing", extracted_fields.get("timing")),
+        ("Self-assessed Business Impact", extracted_fields.get("size_of_business_impact")),
+        ("Self-assessed Existing Knowledge", extracted_fields.get("confidence_level")),
+        ("Decision Reversibility", extracted_fields.get("type_of_decision")),
+        ("Self-assessed Risk of Not Doing", extracted_fields.get("overall_risk_of_doing_nothing")),
+    ]
+    pre_form_lines = [(label, val) for label, val in pre_form_fields if val and val != "Not sure"]
+    if pre_form_lines:
+        lines.append("\n### Pre-conversation Form Inputs\n")
+        for label, val in pre_form_lines:
+            lines.append(f"**{label}:** {val}  ")
+
+    # Conversation messages
+    chat_msgs = [m for m in messages if m["role"] in ("user", "assistant")]
+    if chat_msgs:
+        lines.append("\n\n### Conversation\n")
+        for msg in chat_msgs:
+            display = msg.get("display_content") or msg.get("content", "")
+            display = clean_response_for_display(display).strip()
+            if not display:
+                continue
+            speaker = "**Stakeholder:**" if msg["role"] == "user" else "**CRI:**"
+            lines.append(f"{speaker} {display}\n")
+
+    return "\n".join(lines)
 
 
 def clean_response_for_display(response_text):
@@ -1090,7 +1142,6 @@ def main():
                     placeholder="e.g. Sarah Lee, VP Marketing",
                     help="Who's backing this work at the leadership level?",
                 )
-            with col_b:
                 fi_stakeholders_scope = st.text_input(
                     "Stakeholders for Scoping",
                     placeholder="e.g. Product, Marketing, Sales",
@@ -1101,7 +1152,6 @@ def main():
                     placeholder="e.g. CMO, Brand team",
                     help="Who needs to see the results?",
                 )
-
                 # Timing: quick radio + optional freetext
                 timing_choice = st.radio(
                     "When do you need this?",
@@ -1111,6 +1161,62 @@ def main():
                 fi_timing_other = st.text_input(
                     "Hard deadline or context (optional)",
                     placeholder="e.g. Must inform Q4 planning by Oct 1",
+                )
+
+            with col_b:
+                st.markdown(
+                    "<div style='font-size:12px;font-weight:600;letter-spacing:0.5px;color:#3E474A;"
+                    "text-transform:uppercase;margin-bottom:4px;'>Quick self-assessment</div>"
+                    "<div style='font-size:12px;color:#7F8891;margin-bottom:16px;line-height:1.5;'>"
+                    "Best guess is fine — these help CRI prioritize. Not sure? Pick the closest option.</div>",
+                    unsafe_allow_html=True,
+                )
+                fi_impact = st.select_slider(
+                    "Business impact if we get this right",
+                    options=[
+                        "Not sure",
+                        "Small — supports a minor decision",
+                        "Medium — meaningful but contained",
+                        "Large — shapes a major bet",
+                        "Transformational — company-level",
+                    ],
+                    value="Not sure",
+                    help="How much does the outcome of this research matter to the business?",
+                )
+                fi_confidence = st.select_slider(
+                    "How much do we already know?",
+                    options=[
+                        "Not sure",
+                        "Starting from scratch",
+                        "Some signals, lots of gaps",
+                        "Decent baseline, need validation",
+                        "Strong view, want to confirm",
+                    ],
+                    value="Not sure",
+                    help="How much existing data or intuition does the team have on this topic?",
+                )
+                fi_decision_type = st.selectbox(
+                    "How reversible is the decision this feeds?",
+                    options=[
+                        "Not sure",
+                        "Easy to pivot — low cost to change course",
+                        "Moderate — reversal is possible but costly",
+                        "Hard to reverse — significant commitment",
+                        "Irreversible — one-way door",
+                    ],
+                    help="If the research points somewhere unexpected, how hard is it to change direction?",
+                )
+                fi_risk = st.select_slider(
+                    "Risk of not doing this research",
+                    options=[
+                        "Not sure",
+                        "Low — we'll figure it out either way",
+                        "Medium — some blind spots remain",
+                        "High — real chance of a costly mistake",
+                        "Critical — flying blind on a major call",
+                    ],
+                    value="Not sure",
+                    help="What's the downside of moving forward without research?",
                 )
 
             submitted = st.form_submit_button("Start the conversation →", type="primary", use_container_width=True)
@@ -1135,6 +1241,10 @@ def main():
                 if fi_stakeholders_report.strip():
                     ef["stakeholders_report"] = fi_stakeholders_report.strip()
                 ef["timing"] = timing_val
+                ef["size_of_business_impact"] = fi_impact
+                ef["confidence_level"] = fi_confidence
+                ef["type_of_decision"] = fi_decision_type
+                ef["overall_risk_of_doing_nothing"] = fi_risk
 
                 st.session_state.extracted_fields = ef
                 st.session_state.intake_submitted = True
@@ -1209,7 +1319,14 @@ def main():
 
         form_out, email_out = extract_form_output(response)
         if form_out:
-            st.session_state.form_output = form_out
+            # Append the raw transcript as an appendix for CRI researchers
+            all_msgs = st.session_state.messages + [{
+                "role": "assistant",
+                "content": response,
+                "display_content": clean_response_for_display(response),
+            }]
+            transcript = build_transcript_appendix(all_msgs, st.session_state.extracted_fields)
+            st.session_state.form_output = form_out + transcript
         if email_out:
             st.session_state.email_output = email_out
 
