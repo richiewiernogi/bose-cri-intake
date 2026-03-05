@@ -1329,7 +1329,7 @@ def main():
         <div class="main-header">
             <div class="brand-label">Bose · Consumer Research & Insights</div>
             <h1>Research Intake</h1>
-            <div class="subtitle">Tell me what's going on. We'll figure out the brief together.</div>
+            <div class="subtitle">A few questions to help CRI scope the right research for you.</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1443,11 +1443,22 @@ def main():
                     help="What's the downside of moving forward without research?",
                 )
 
+            st.markdown(
+                "<div style='font-size:11px;color:#7F8891;text-align:center;margin-top:8px;margin-bottom:-4px;'>"
+                "Use <strong>Tab</strong> to move between fields. Click the button below when you're ready.</div>",
+                unsafe_allow_html=True,
+            )
             submitted = st.form_submit_button("Start the conversation →", type="primary", use_container_width=True)
 
         if submitted:
+            # Catch accidental submits — require name + at least project name or sponsor
+            missing = []
             if not fi_name.strip():
-                st.error("Please enter your name so we know who we're talking to.")
+                missing.append("Your Name")
+            if not fi_project.strip() and not fi_sponsor.strip():
+                missing.append("Project Name or Executive Sponsor")
+            if missing:
+                st.error(f"Please fill in: {', '.join(missing)}. Use Tab to move between fields, then click the button when ready.")
             else:
                 timing_val = timing_choice
                 if fi_timing_other.strip():
@@ -1472,6 +1483,21 @@ def main():
 
                 st.session_state.extracted_fields = ef
                 st.session_state.intake_submitted = True
+
+                # Seed the conversation with a structured opening question
+                proj_display = fi_project.strip() or "this"
+                opening = (
+                    f"Thanks, {fi_name.strip().split()[0]}. "
+                    f"Let's get into it.\n\n"
+                    f"What's the specific business question you're trying to answer with {proj_display}? "
+                    f"Not the broad topic — the precise thing the business needs to know to make a decision."
+                )
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": opening,
+                    "display_content": opening,
+                })
+
                 st.rerun()
 
         st.stop()
@@ -1535,7 +1561,7 @@ def main():
         )
 
     # ── Chat input ──
-    if prompt := st.chat_input("What's going on with your project?"):
+    if prompt := st.chat_input("Type your response here…"):
         st.session_state.messages.append(
             {"role": "user", "content": prompt, "display_content": prompt}
         )
